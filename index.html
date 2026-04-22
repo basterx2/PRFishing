@@ -1,0 +1,2747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0f1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Provo River">
+<meta name="description" content="Provo River Fishing Intelligence - Real-time conditions & hotspot analysis">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Provo River · Fishing Intelligence</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<style>
+/* ═══════════════════════════════════════════
+   DESIGN: INDUSTRIAL WILDERNESS / UTILITY-FIRST
+   Dark, tactical, topographic feel.
+   Like a serious field tool, not an app store toy.
+   ═══════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;400;600;700;800&family=Barlow:wght@300;400;500&display=swap');
+
+:root {
+  --bg-deep:    #070c14;
+  --bg-panel:   #0d1520;
+  --bg-card:    #111e2e;
+  --bg-raised:  #162232;
+  --border:     #1e3045;
+  --border-hi:  #2a4a6a;
+
+  --text-primary:   #e8f0f8;
+  --text-secondary: #7a9ab8;
+  --text-dim:       #3a5570;
+
+  --accent-cyan:   #00d4ff;
+  --accent-teal:   #00bfa5;
+  --accent-amber:  #ffab00;
+  --accent-red:    #ff4757;
+  --accent-green:  #00e676;
+  --accent-orange: #ff6d00;
+
+  --score-bad:       #ff4757;
+  --score-regular:   #ffab00;
+  --score-good:      #69f0ae;
+  --score-excellent: #00e5ff;
+
+  --font-display: 'Barlow Condensed', sans-serif;
+  --font-mono:    'Space Mono', monospace;
+  --font-body:    'Barlow', sans-serif;
+
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+
+body {
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── TOPOGRAPHIC BACKGROUND ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 38px,
+      rgba(0,212,255,0.015) 38px,
+      rgba(0,212,255,0.015) 39px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 38px,
+      rgba(0,212,255,0.015) 38px,
+      rgba(0,212,255,0.015) 39px
+    );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── SHELL ── */
+#app {
+  position: relative;
+  z-index: 1;
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── HEADER ── */
+.app-header {
+  padding: calc(var(--safe-top) + 12px) 16px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.header-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  line-height: 1;
+}
+
+.header-sub {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+  margin-top: 2px;
+  line-height: 1;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.pulse-dot.loading { background: var(--accent-amber); }
+.pulse-dot.error   { background: var(--accent-red); animation: none; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* ── NAV TABS ── */
+.nav-tabs {
+  display: flex;
+  padding: 12px 16px 0;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+
+.nav-tab {
+  flex: 1;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.nav-tab.active {
+  color: var(--accent-cyan);
+  border-bottom-color: var(--accent-cyan);
+}
+
+.nav-tab:hover:not(.active) { color: var(--text-secondary); }
+
+/* ── PAGES ── */
+.page { display: none; flex: 1; overflow-y: auto; padding: 16px; padding-bottom: calc(var(--safe-bottom) + 20px); }
+.page.active { display: block; }
+
+/* ── SCORE HERO ── */
+.score-hero {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.score-hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--score-glow, rgba(0,212,255,0.06)) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.score-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.score-number {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 88px;
+  line-height: 1;
+  color: var(--score-color, var(--accent-cyan));
+  letter-spacing: -2px;
+  transition: color 0.5s;
+}
+
+.score-verdict {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--score-color, var(--accent-cyan));
+  margin-top: 2px;
+}
+
+.score-bar-wrap {
+  margin-top: 14px;
+  height: 4px;
+  background: var(--bg-raised);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.score-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--score-color, var(--accent-cyan));
+  transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.score-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.score-factor {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.score-factor-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.score-factor-val {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--text-primary);
+}
+
+/* ── DATA GRID ── */
+.data-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.data-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  position: relative;
+}
+
+.data-card.full { grid-column: 1 / -1; }
+
+.data-card-icon {
+  font-size: 16px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.data-card-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.data-card-value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 26px;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.data-card-unit {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-left: 3px;
+}
+
+.data-card-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.trend-up   { color: var(--accent-red); }
+.trend-down { color: var(--accent-green); }
+.trend-stable { color: var(--text-secondary); }
+
+/* ── SECTION HEADER ── */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  margin-top: 16px;
+}
+
+.section-header:first-child { margin-top: 0; }
+
+.section-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.section-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── LUNAR / SOLUNAR ── */
+.solunar-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.moon-phase-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.moon-icon {
+  font-size: 42px;
+  line-height: 1;
+}
+
+.moon-info {
+  flex: 1;
+}
+
+.moon-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.moon-illumination {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.moon-rating {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-hi);
+}
+
+.feeding-windows {
+  display: grid;
+  gap: 6px;
+}
+
+.feeding-window {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.feeding-window.major { border-color: var(--accent-cyan); }
+.feeding-window.minor { border-color: var(--border-hi); }
+
+.fw-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.feeding-window.major .fw-label { color: var(--accent-cyan); }
+.feeding-window.minor .fw-label { color: var(--text-secondary); }
+
+.fw-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.fw-active {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--accent-green);
+  animation: pulse 2s infinite;
+}
+
+/* ── FORECAST STRIP ── */
+.forecast-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+  margin-bottom: 12px;
+}
+.forecast-strip::-webkit-scrollbar { display: none; }
+
+.forecast-day {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 72px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.forecast-day.today { border-color: var(--accent-cyan); }
+
+.fc-day-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.fc-icon { font-size: 22px; margin-bottom: 4px; }
+
+.fc-temp {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.fc-temp-lo {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.fc-wind {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* ── ALERT BANNER ── */
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.alert-banner.info    { background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.25); color: var(--accent-cyan); }
+.alert-banner.warning { background: rgba(255,171,0,0.08); border: 1px solid rgba(255,171,0,0.25); color: var(--accent-amber); }
+.alert-banner.danger  { background: rgba(255,71,87,0.08);  border: 1px solid rgba(255,71,87,0.25);  color: var(--accent-red); }
+.alert-banner.good    { background: rgba(0,230,118,0.08); border: 1px solid rgba(0,230,118,0.25); color: var(--accent-green); }
+
+/* ── CHART CONTAINER ── */
+.chart-wrap {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.chart-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.chart-canvas-wrap {
+  position: relative;
+  height: 120px;
+}
+
+/* ── MAP PAGE ── */
+#map-container {
+  height: 340px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  margin-bottom: 12px;
+  position: relative;
+}
+
+.map-legend {
+  display: flex;
+  gap: 14px;
+  padding: 10px 0;
+  margin-bottom: 12px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid;
+}
+
+/* ── HOTSPOT LIST ── */
+.hotspot-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.hotspot-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.hotspot-card:hover { border-color: var(--border-hi); background: var(--bg-card); }
+
+.hotspot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.hotspot-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.hotspot-score-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.badge-high     { background: rgba(0,230,118,0.15); color: var(--accent-green); border: 1px solid rgba(0,230,118,0.3); }
+.badge-medium   { background: rgba(255,171,0,0.15); color: var(--accent-amber); border: 1px solid rgba(255,171,0,0.3); }
+.badge-low      { background: rgba(255,71,87,0.15); color: var(--accent-red); border: 1px solid rgba(255,71,87,0.3); }
+
+.hotspot-factors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.factor-tag {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.factor-tag.positive { border-color: rgba(0,191,165,0.4); color: var(--accent-teal); }
+
+.hotspot-rec {
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.hotspot-score-bar-wrap {
+  height: 3px;
+  background: var(--bg-raised);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.hotspot-score-bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.8s;
+}
+
+/* ── SEGMENT TABS ── */
+.segment-tabs {
+  display: flex;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+
+.seg-tab {
+  flex: 1;
+  padding: 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.seg-tab.active {
+  background: var(--bg-raised);
+  color: var(--accent-cyan);
+  border: 1px solid var(--border-hi);
+}
+
+/* ── LOADING STATES ── */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-raised) 50%, var(--bg-card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7,12,20,0.85);
+  border-radius: inherit;
+  z-index: 10;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── RIVER SEGMENT SELECTOR ── */
+.river-segments {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.river-segment {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.river-segment.active { border-color: var(--accent-cyan); }
+
+.rs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.rs-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.rs-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.rs-desc {
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.rs-fish {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fish-tag {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+/* ── PRESSURE INDICATOR ── */
+.pressure-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.pressure-rising   { background: rgba(0,230,118,0.1);  color: var(--accent-green); }
+.pressure-falling  { background: rgba(255,71,87,0.1);  color: var(--accent-red); }
+.pressure-stable   { background: rgba(122,154,184,0.1); color: var(--text-secondary); }
+
+/* ── SUN/MOON TIMES ── */
+.astro-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.astro-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.astro-icon { font-size: 18px; }
+
+.astro-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.astro-time {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+/* ── LAST UPDATED ── */
+.last-updated {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  padding: 8px 0 4px;
+}
+
+/* ── REFRESH BTN ── */
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 8px;
+}
+
+.refresh-btn:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+/* ── LEAFLET DARK THEME ── */
+.leaflet-container { background: #070c14 !important; }
+.leaflet-control-attribution { display: none !important; }
+.leaflet-popup-content-wrapper {
+  background: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-hi) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
+}
+.leaflet-popup-tip { background: var(--bg-card) !important; }
+.leaflet-popup-close-button { color: var(--text-secondary) !important; }
+.leaflet-bar a {
+  background: var(--bg-card) !important;
+  border-color: var(--border) !important;
+  color: var(--text-primary) !important;
+}
+
+/* ── POPUP CONTENT ── */
+.popup-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.popup-score {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.popup-detail {
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ── UTILITIES ── */
+.text-cyan   { color: var(--accent-cyan); }
+.text-green  { color: var(--accent-green); }
+.text-amber  { color: var(--accent-amber); }
+.text-red    { color: var(--accent-red); }
+.text-dim    { color: var(--text-dim); }
+
+.mt-8  { margin-top: 8px; }
+.mb-8  { margin-bottom: 8px; }
+.mb-12 { margin-bottom: 12px; }
+
+/* ── RESPONSIVE ── */
+@media (min-width: 420px) {
+  .score-number { font-size: 96px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HEADER -->
+  <header class="app-header">
+    <div>
+      <div class="header-title">Provo River · Utah</div>
+      <div class="header-sub">Fishing Intelligence</div>
+    </div>
+    <div class="header-status">
+      <div class="pulse-dot loading" id="status-dot"></div>
+      <span id="status-text">LOADING</span>
+    </div>
+  </header>
+
+  <!-- NAV -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="dashboard">Dashboard</button>
+    <button class="nav-tab" data-tab="river">River</button>
+    <button class="nav-tab" data-tab="map">Map</button>
+    <button class="nav-tab" data-tab="solunar">Solunar</button>
+  </nav>
+
+  <!-- ════════ PAGE: DASHBOARD ════════ -->
+  <div class="page active" id="tab-dashboard">
+
+    <!-- FISHING SCORE HERO -->
+    <div class="score-hero" id="score-hero">
+      <div class="score-label">Overall Fishing Index</div>
+      <div class="score-number" id="score-number">--</div>
+      <div class="score-verdict" id="score-verdict">ANALYZING</div>
+      <div class="score-bar-wrap">
+        <div class="score-bar" id="score-bar" style="width:0%"></div>
+      </div>
+      <div class="score-breakdown">
+        <div class="score-factor">
+          <div class="score-factor-label">Solunar</div>
+          <div class="score-factor-val" id="sf-solunar">--</div>
+        </div>
+        <div class="score-factor">
+          <div class="score-factor-label">Weather</div>
+          <div class="score-factor-val" id="sf-weather">--</div>
+        </div>
+        <div class="score-factor">
+          <div class="score-factor-label">River</div>
+          <div class="score-factor-val" id="sf-river">--</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ALERT -->
+    <div class="alert-banner info" id="main-alert" style="display:none">
+      <span id="alert-icon">ℹ️</span>
+      <span id="alert-text"></span>
+    </div>
+
+    <!-- WEATHER CURRENT -->
+    <div class="section-header">
+      <span class="section-title">Current Conditions</span>
+      <div class="section-line"></div>
+    </div>
+
+    <div class="data-grid">
+      <div class="data-card">
+        <span class="data-card-icon">🌡</span>
+        <div class="data-card-label">Air Temp</div>
+        <div class="data-card-value" id="w-temp">--<span class="data-card-unit">°F</span></div>
+        <div class="data-card-sub" id="w-feels">Feels like --°F</div>
+      </div>
+      <div class="data-card">
+        <span class="data-card-icon">💨</span>
+        <div class="data-card-label">Wind</div>
+        <div class="data-card-value" id="w-wind">--<span class="data-card-unit">mph</span></div>
+        <div class="data-card-sub" id="w-dir">-- direction</div>
+      </div>
+      <div class="data-card">
+        <span class="data-card-icon">🧭</span>
+        <div class="data-card-label">Pressure</div>
+        <div class="data-card-value" id="w-pressure">--<span class="data-card-unit">hPa</span></div>
+        <div class="data-card-sub" id="w-pressure-trend"></div>
+      </div>
+      <div class="data-card">
+        <span class="data-card-icon">☁️</span>
+        <div class="data-card-label">Sky Cover</div>
+        <div class="data-card-value" id="w-clouds">--<span class="data-card-unit">%</span></div>
+        <div class="data-card-sub" id="w-desc">--</div>
+      </div>
+      <div class="data-card full">
+        <span class="data-card-icon">💧</span>
+        <div class="data-card-label">Humidity · Dew Point</div>
+        <div class="data-card-value" id="w-humidity">--<span class="data-card-unit">%</span>
+          <span style="font-size:14px; color:var(--text-secondary); margin-left:10px;" id="w-dew">Dew --°F</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 7-DAY FORECAST -->
+    <div class="section-header">
+      <span class="section-title">7-Day Forecast</span>
+      <div class="section-line"></div>
+    </div>
+    <div class="forecast-strip" id="forecast-strip">
+      <!-- populated by JS -->
+    </div>
+
+    <!-- QUICK RIVER STATE -->
+    <div class="section-header">
+      <span class="section-title">River Status</span>
+      <div class="section-line"></div>
+    </div>
+    <div class="data-grid">
+      <div class="data-card">
+        <span class="data-card-icon">🌊</span>
+        <div class="data-card-label">Flow Rate</div>
+        <div class="data-card-value" id="r-flow">--<span class="data-card-unit">cfs</span></div>
+        <div class="data-card-sub" id="r-flow-rating"></div>
+      </div>
+      <div class="data-card">
+        <span class="data-card-icon">📏</span>
+        <div class="data-card-label">Gage Height</div>
+        <div class="data-card-value" id="r-gage">--<span class="data-card-unit">ft</span></div>
+        <div class="data-card-sub" id="r-gage-trend"></div>
+      </div>
+    </div>
+
+    <!-- SOLUNAR QUICK -->
+    <div class="section-header">
+      <span class="section-title">Today's Feeding Windows</span>
+      <div class="section-line"></div>
+    </div>
+    <div id="dashboard-feeding-windows"></div>
+
+    <div class="last-updated" id="last-updated-dash">Last updated: --</div>
+    <button class="refresh-btn" id="refresh-btn">↺ &nbsp;Refresh Data</button>
+  </div>
+
+  <!-- ════════ PAGE: RIVER ════════ -->
+  <div class="page" id="tab-river">
+
+    <div class="section-header">
+      <span class="section-title">USGS Station 10163000</span>
+      <div class="section-line"></div>
+    </div>
+
+    <div class="data-grid">
+      <div class="data-card">
+        <span class="data-card-icon">🌊</span>
+        <div class="data-card-label">Discharge</div>
+        <div class="data-card-value" id="rv-flow">--<span class="data-card-unit">cfs</span></div>
+        <div class="data-card-sub" id="rv-flow-sub"></div>
+      </div>
+      <div class="data-card">
+        <span class="data-card-icon">📏</span>
+        <div class="data-card-label">Gage Height</div>
+        <div class="data-card-value" id="rv-gage">--<span class="data-card-unit">ft</span></div>
+        <div class="data-card-sub" id="rv-gage-sub"></div>
+      </div>
+      <div class="data-card full">
+        <div class="data-card-label">Flow Assessment for Fishing</div>
+        <div style="margin-top:6px; font-family:var(--font-body); font-size:12px; color:var(--text-secondary); line-height:1.6;" id="flow-assessment">--</div>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">7-Day Discharge (cfs)</div>
+      <div class="chart-canvas-wrap">
+        <canvas id="flow-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">7-Day Gage Height (ft)</div>
+      <div class="chart-canvas-wrap">
+        <canvas id="gage-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- River Segments -->
+    <div class="section-header">
+      <span class="section-title">River Segments</span>
+      <div class="section-line"></div>
+    </div>
+
+    <div class="river-segments" id="river-segments-list"></div>
+
+    <div class="last-updated" id="last-updated-river">USGS data: --</div>
+  </div>
+
+  <!-- ════════ PAGE: MAP ════════ -->
+  <div class="page" id="tab-map">
+
+    <div class="segment-tabs">
+      <button class="seg-tab active" data-seg="all">All River</button>
+      <button class="seg-tab" data-seg="upper">Upper</button>
+      <button class="seg-tab" data-seg="middle">Middle</button>
+      <button class="seg-tab" data-seg="lower">Lower</button>
+    </div>
+
+    <div id="map-container">
+      <div class="loading-overlay" id="map-loading">
+        <div class="spinner"></div>
+      </div>
+    </div>
+
+    <div class="map-legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="border-color:#00e676; background:rgba(0,230,118,0.3)"></div>
+        High
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="border-color:#ffab00; background:rgba(255,171,0,0.3)"></div>
+        Medium
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="border-color:#ff4757; background:rgba(255,71,87,0.3)"></div>
+        Low
+      </div>
+      <div class="legend-item" style="margin-left:auto">
+        <div class="legend-dot" style="border-color:#00d4ff; background:rgba(0,212,255,0.3)"></div>
+        USGS
+      </div>
+    </div>
+
+    <div class="section-header">
+      <span class="section-title">Hotspot Analysis</span>
+      <div class="section-line"></div>
+    </div>
+
+    <div class="hotspot-list" id="hotspot-list"></div>
+  </div>
+
+  <!-- ════════ PAGE: SOLUNAR ════════ -->
+  <div class="page" id="tab-solunar">
+
+    <div class="solunar-card">
+      <div class="moon-phase-row">
+        <div class="moon-icon" id="sol-moon-icon">🌑</div>
+        <div class="moon-info">
+          <div class="moon-name" id="sol-moon-name">Loading...</div>
+          <div class="moon-illumination" id="sol-moon-illum">-- % illuminated</div>
+          <div style="margin-top:6px">
+            <span class="moon-rating" id="sol-moon-rating">--</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="astro-row">
+        <div class="astro-item">
+          <div class="astro-icon">🌅</div>
+          <div>
+            <div class="astro-label">SUNRISE</div>
+            <div class="astro-time" id="sol-sunrise">--</div>
+          </div>
+        </div>
+        <div class="astro-item">
+          <div class="astro-icon">🌇</div>
+          <div>
+            <div class="astro-label">SUNSET</div>
+            <div class="astro-time" id="sol-sunset">--</div>
+          </div>
+        </div>
+        <div class="astro-item">
+          <div class="astro-icon">🌕</div>
+          <div>
+            <div class="astro-label">MOONRISE</div>
+            <div class="astro-time" id="sol-moonrise">--</div>
+          </div>
+        </div>
+        <div class="astro-item">
+          <div class="astro-icon">🌑</div>
+          <div>
+            <div class="astro-label">MOONSET</div>
+            <div class="astro-time" id="sol-moonset">--</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <span class="section-title">Feeding Windows — Today</span>
+      <div class="section-line"></div>
+    </div>
+
+    <div class="feeding-windows" id="sol-windows"></div>
+
+    <div class="section-header" style="margin-top:20px">
+      <span class="section-title">Fishing Activity Forecast</span>
+      <div class="section-line"></div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">Solunar Activity — Next 24 Hours</div>
+      <div class="chart-canvas-wrap" style="height:140px">
+        <canvas id="solunar-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="section-header" style="margin-top:4px">
+      <span class="section-title">7-Day Lunar Outlook</span>
+      <div class="section-line"></div>
+    </div>
+
+    <div id="lunar-7day" style="display:grid; gap:6px; margin-bottom:12px"></div>
+
+    <div class="section-header">
+      <span class="section-title">Understanding Solunar Theory</span>
+      <div class="section-line"></div>
+    </div>
+    <div style="background:var(--bg-panel); border:1px solid var(--border); border-radius:10px; padding:14px; font-family:var(--font-body); font-size:12px; color:var(--text-secondary); line-height:1.7;">
+      <p><strong style="color:var(--text-primary)">Major Periods</strong> (≈2h) occur when the moon is directly overhead or underfoot — highest gravitational pull, strongest fish feeding response.</p>
+      <br>
+      <p><strong style="color:var(--text-primary)">Minor Periods</strong> (≈1h) occur during moonrise and moonset — moderate activity increase.</p>
+      <br>
+      <p><strong style="color:var(--text-primary)">New & Full Moons</strong> produce the strongest solunar effects. Quarter moons are weakest.</p>
+      <br>
+      <p><strong style="color:var(--text-primary)">Best times</strong> are when a major period coincides with dawn or dusk.</p>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  PROVO RIVER FISHING INTELLIGENCE
+//  Architecture: Module-based, all client-side
+// ═══════════════════════════════════════════════════════
+
+const CONFIG = {
+  river: {
+    name: 'Provo River',
+    usgs_station: '10163000',
+    lat: 40.3186,
+    lon: -111.6008,
+    timezone: 'America/Denver',
+  },
+  cache_ttl: 10 * 60 * 1000, // 10 min
+  weather: {
+    // Open-Meteo - FREE, no API key
+    base: 'https://api.open-meteo.com/v1/forecast',
+  },
+  usgs: {
+    base: 'https://waterservices.usgs.gov/nwis/iv/',
+  },
+};
+
+// ─────────────────────────────────────────
+// CACHE MODULE
+// ─────────────────────────────────────────
+const Cache = {
+  get(key) {
+    try {
+      const item = localStorage.getItem('provo_' + key);
+      if (!item) return null;
+      const { data, ts } = JSON.parse(item);
+      if (Date.now() - ts > CONFIG.cache_ttl) return null;
+      return data;
+    } catch { return null; }
+  },
+  set(key, data) {
+    try {
+      localStorage.setItem('provo_' + key, JSON.stringify({ data, ts: Date.now() }));
+    } catch {}
+  },
+};
+
+// ─────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────
+const State = {
+  weather: null,
+  river: null,
+  solunar: null,
+  score: null,
+  hotspots: [],
+  flowChart: null,
+  gageChart: null,
+  solunarChart: null,
+  map: null,
+  mapMarkers: [],
+  activeSegment: 'all',
+  lastUpdate: null,
+};
+
+// ─────────────────────────────────────────
+// WEATHER MODULE (Open-Meteo, no API key)
+// ─────────────────────────────────────────
+const WeatherModule = {
+  async fetch() {
+    const cached = Cache.get('weather');
+    if (cached) return cached;
+
+    const params = new URLSearchParams({
+      latitude: CONFIG.river.lat,
+      longitude: CONFIG.river.lon,
+      current: 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,surface_pressure,dew_point_2m',
+      daily: 'temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum,sunrise,sunset',
+      temperature_unit: 'fahrenheit',
+      wind_speed_unit: 'mph',
+      precipitation_unit: 'inch',
+      timezone: CONFIG.river.timezone,
+      forecast_days: 7,
+    });
+
+    const res = await fetch(`${CONFIG.weather.base}?${params}`);
+    if (!res.ok) throw new Error('Weather fetch failed');
+    const data = await res.json();
+    Cache.set('weather', data);
+    return data;
+  },
+
+  // WMO code → emoji + description
+  wmoToIcon(code) {
+    const map = {
+      0:'☀️', 1:'🌤', 2:'⛅', 3:'☁️',
+      45:'🌫', 48:'🌫',
+      51:'🌦', 53:'🌦', 55:'🌧',
+      61:'🌧', 63:'🌧', 65:'🌧',
+      71:'🌨', 73:'🌨', 75:'❄️',
+      77:'🌨', 80:'🌦', 81:'🌧', 82:'⛈',
+      85:'🌨', 86:'❄️',
+      95:'⛈', 96:'⛈', 99:'⛈',
+    };
+    return map[code] || '🌤';
+  },
+
+  wmoToDesc(code) {
+    const map = {
+      0:'Clear sky', 1:'Mainly clear', 2:'Partly cloudy', 3:'Overcast',
+      45:'Foggy', 48:'Icy fog',
+      51:'Light drizzle', 53:'Drizzle', 55:'Heavy drizzle',
+      61:'Light rain', 63:'Rain', 65:'Heavy rain',
+      71:'Light snow', 73:'Snow', 75:'Heavy snow',
+      80:'Showers', 81:'Rain showers', 82:'Heavy showers',
+      95:'Thunderstorm', 96:'T-storm w/hail', 99:'T-storm w/hail',
+    };
+    return map[code] || 'Cloudy';
+  },
+
+  windDeg(deg) {
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(deg / 22.5) % 16];
+  },
+
+  // Score weather for fishing (0–100)
+  scoreWeather(w) {
+    const c = w.current;
+    let score = 50;
+
+    // Temp sweet spot 50–72°F
+    const temp = c.temperature_2m;
+    if (temp >= 50 && temp <= 72) score += 15;
+    else if (temp >= 45 && temp <= 80) score += 5;
+    else if (temp < 35 || temp > 90) score -= 20;
+
+    // Cloud cover — overcast = better for fish, less spooky
+    const clouds = c.cloud_cover;
+    if (clouds >= 40 && clouds <= 80) score += 10;
+    else if (clouds > 80) score += 5;
+    else score += 2; // clear sky still ok
+
+    // Wind — calm is best
+    const wind = c.wind_speed_10m;
+    if (wind < 5) score += 10;
+    else if (wind < 10) score += 5;
+    else if (wind > 20) score -= 15;
+    else if (wind > 15) score -= 8;
+
+    // Pressure — high & stable = good
+    const press = c.surface_pressure;
+    if (press >= 1013 && press <= 1025) score += 10;
+    else if (press < 1005) score -= 10; // falling pressure = rain incoming
+    else if (press < 1000) score -= 20;
+
+    // Weather code — rain/storm = bad
+    const wc = c.weather_code;
+    if (wc >= 80 && wc <= 99) score -= 25;
+    else if (wc >= 61 && wc <= 65) score -= 10;
+    else if (wc === 0 || wc === 1) score += 5;
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+  },
+};
+
+// ─────────────────────────────────────────
+// USGS RIVER MODULE
+// ─────────────────────────────────────────
+const RiverModule = {
+  async fetch() {
+    const cached = Cache.get('usgs');
+    if (cached) return cached;
+
+    // Get last 7 days of data
+    const end = new Date();
+    const start = new Date(end - 7 * 24 * 60 * 60 * 1000);
+    const fmt = d => d.toISOString().split('.')[0];
+
+    const params = new URLSearchParams({
+      sites: CONFIG.river.usgs_station,
+      parameterCd: '00060,00065', // discharge + gage height
+      startDT: fmt(start),
+      endDT: fmt(end),
+      format: 'json',
+    });
+
+    const res = await fetch(`${CONFIG.usgs.base}?${params}`);
+    if (!res.ok) throw new Error('USGS fetch failed');
+    const data = await res.json();
+    const processed = this.process(data);
+    Cache.set('usgs', processed);
+    return processed;
+  },
+
+  process(raw) {
+    const ts = raw.value?.timeSeries || [];
+    const result = { flow: [], gage: [], current: {} };
+
+    ts.forEach(series => {
+      const code = series.variable?.variableCode?.[0]?.value;
+      const values = series.values?.[0]?.value || [];
+      const unit = series.variable?.unit?.unitCode || '';
+
+      const parsed = values.map(v => ({
+        t: new Date(v.dateTime),
+        v: parseFloat(v.value),
+      })).filter(v => !isNaN(v.v));
+
+      if (code === '00060') {
+        result.flow = parsed;
+        result.current.flow = parsed[parsed.length - 1]?.v;
+        result.current.flowUnit = unit;
+      }
+      if (code === '00065') {
+        result.gage = parsed;
+        result.current.gage = parsed[parsed.length - 1]?.v;
+        result.current.gageUnit = unit;
+      }
+    });
+
+    // Compute trend (last 6h vs previous 6h)
+    if (result.flow.length > 12) {
+      const recent = result.flow.slice(-6).reduce((s, v) => s + v.v, 0) / 6;
+      const prev = result.flow.slice(-12, -6).reduce((s, v) => s + v.v, 0) / 6;
+      result.current.flowTrend = recent > prev * 1.05 ? 'rising' : recent < prev * 0.95 ? 'falling' : 'stable';
+    }
+    if (result.gage.length > 12) {
+      const recent = result.gage.slice(-6).reduce((s, v) => s + v.v, 0) / 6;
+      const prev = result.gage.slice(-12, -6).reduce((s, v) => s + v.v, 0) / 6;
+      result.current.gageTrend = recent > prev * 1.02 ? 'rising' : recent < prev * 0.98 ? 'falling' : 'stable';
+    }
+
+    return result;
+  },
+
+  // Score river conditions for fishing (0–100)
+  // Based on Provo River typical ideal ranges
+  scoreRiver(r) {
+    const flow = r.current.flow;
+    if (!flow) return 50;
+
+    let score = 50;
+
+    // Ideal Provo flow for trout: 80–250 cfs
+    // Good:    50–400 cfs
+    // Marginal: 25–600 cfs
+    if (flow >= 80 && flow <= 250) score += 35;
+    else if (flow >= 50 && flow <= 400) score += 20;
+    else if (flow >= 25 && flow <= 600) score += 5;
+    else if (flow > 600) score -= 25; // too fast, muddy
+    else if (flow < 25)  score -= 15; // too low, fish spooky
+
+    // Trend bonus
+    const trend = r.current.flowTrend;
+    if (trend === 'falling') score += 10; // clearing water
+    else if (trend === 'rising') score -= 10; // potentially mudding
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+  },
+
+  // Human-readable flow assessment
+  assessFlow(cfs) {
+    if (!cfs) return 'No data available.';
+    if (cfs < 25) return '⚠️ Very low flow. Fish are extremely wary in thin water — approach slowly and use long fine leaders. Focus on deeper pools.';
+    if (cfs < 80) return '🟡 Below optimal. Water is clear and fish can be spooky. Go lighter with tippet (6x), use smaller flies, and stay low.';
+    if (cfs <= 250) return '✅ Prime conditions. Flow is in the ideal trout range. Excellent visibility, fish are actively feeding and positioned in predictable lies.';
+    if (cfs <= 400) return '🟡 Slightly elevated but very fishable. Focus on slower seams and eddy pockets. Heavier nymphs may be needed.';
+    if (cfs <= 600) return '⚠️ High water — river is running fast. Fish will hug the banks and slower water. Longer leaders, heavier weights.';
+    return '🔴 Dangerous flood conditions. Not recommended for wading. Fish may be off-feed or displaced.';
+  },
+};
+
+// ─────────────────────────────────────────
+// SOLUNAR MODULE
+// ─────────────────────────────────────────
+const SolunarModule = {
+  // All calculations done client-side
+  // Based on solunar theory (John Alden Knight, 1926)
+
+  // Julian Day Number
+  jdn(date) {
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    return Math.floor((1461 * (y + 4800 + Math.floor((m - 14) / 12))) / 4)
+      + Math.floor((367 * (m - 2 - 12 * Math.floor((m - 14) / 12))) / 12)
+      - Math.floor((3 * Math.floor((y + 4900 + Math.floor((m - 14) / 12)) / 100)) / 4)
+      + d - 32075;
+  },
+
+  // Moon phase (0–1, 0=new, 0.5=full)
+  moonPhase(date) {
+    const jd = this.jdn(date);
+    const cycle = 29.53058867;
+    const known_new = 2451550.1; // Jan 6, 2000
+    return ((jd - known_new) % cycle + cycle) % cycle / cycle;
+  },
+
+  moonPhaseName(phase) {
+    if (phase < 0.0625 || phase >= 0.9375) return { name: 'New Moon',        icon: '🌑', rating: 'EXCELLENT' };
+    if (phase < 0.1875)                    return { name: 'Waxing Crescent',  icon: '🌒', rating: 'GOOD' };
+    if (phase < 0.3125)                    return { name: 'First Quarter',     icon: '🌓', rating: 'FAIR' };
+    if (phase < 0.4375)                    return { name: 'Waxing Gibbous',   icon: '🌔', rating: 'GOOD' };
+    if (phase < 0.5625)                    return { name: 'Full Moon',         icon: '🌕', rating: 'EXCELLENT' };
+    if (phase < 0.6875)                    return { name: 'Waning Gibbous',   icon: '🌖', rating: 'GOOD' };
+    if (phase < 0.8125)                    return { name: 'Last Quarter',      icon: '🌗', rating: 'FAIR' };
+    return                                        { name: 'Waning Crescent',  icon: '🌘', rating: 'GOOD' };
+  },
+
+  // Moon illumination %
+  moonIllumination(phase) {
+    return Math.round((1 - Math.cos(phase * 2 * Math.PI)) / 2 * 100);
+  },
+
+  // Sun position calculations (Meeus)
+  sunTimes(date, lat, lon) {
+    const JD = this.jdn(date) - 0.5 + (12 - (lat > 0 ? 7 : 0)) / 24; // rough
+    const n = JD - 2451545.0;
+    const L = (280.46 + 0.9856474 * n) % 360;
+    const g = ((357.528 + 0.9856003 * n) % 360) * Math.PI / 180;
+    const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * Math.PI / 180;
+    const epsilon = 23.439 * Math.PI / 180;
+    const RA = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
+    const decl = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
+
+    const latRad = lat * Math.PI / 180;
+    const cosH = (Math.cos(96 * Math.PI / 180) - Math.sin(decl) * Math.sin(latRad))
+                 / (Math.cos(decl) * Math.cos(latRad));
+
+    if (cosH > 1) return { rise: null, set: null, noon: null }; // no sunrise
+    if (cosH < -1) return { rise: null, set: null, noon: null }; // no sunset
+
+    const H = Math.acos(cosH) * 180 / Math.PI;
+
+    // Solar noon (UTC hours)
+    const GMST = 6.697375 + 0.0657098242 * n;
+    const noon_utc = ((RA * 180 / Math.PI / 15) - GMST + lon / 15 + 24) % 24;
+
+    const rise_utc = (noon_utc - H / 15 + 24) % 24;
+    const set_utc  = (noon_utc + H / 15 + 24) % 24;
+
+    return {
+      rise: this.utcHourToLocal(date, rise_utc),
+      set:  this.utcHourToLocal(date, set_utc),
+      noon: this.utcHourToLocal(date, noon_utc),
+    };
+  },
+
+  // Moon transit times (simplified)
+  moonTimes(date, lat, lon) {
+    const phase = this.moonPhase(date);
+    const cycle = 29.53; // days
+    const dailyRetard = 24 / (1 / (1 - 1/cycle)); // ~50.47 min per day
+    
+    // Approximate moon overhead based on phase relative to sun
+    const sunT = this.sunTimes(date, lat, lon);
+    if (!sunT.noon) return { rise: null, set: null, overhead: null, underfoot: null };
+
+    const solarNoonH = this.timeToHours(sunT.noon);
+    // Moon transits roughly: noon + phase*24.84h
+    const moonTransit = (solarNoonH + phase * 24.84) % 24;
+
+    return {
+      overhead:  this.hoursToTime(moonTransit),
+      underfoot: this.hoursToTime((moonTransit + 12) % 24),
+      rise:      this.hoursToTime((moonTransit - 6 + 24) % 24),
+      set:       this.hoursToTime((moonTransit + 6) % 24),
+    };
+  },
+
+  // Generate feeding windows for a date
+  // Major: moonrise, moonset, moon overhead, moon underfoot (each ~2h window)
+  // Minor: sunrise, sunset (each ~1h window)
+  feedingWindows(date, lat, lon) {
+    const sun = this.sunTimes(date, lat, lon);
+    const moon = this.moonTimes(date, lat, lon);
+    const phase = this.moonPhase(date);
+    const phaseInfo = this.moonPhaseName(phase);
+
+    const windows = [];
+
+    // Phase multiplier (new/full = stronger)
+    const phaseMult = (phaseInfo.rating === 'EXCELLENT') ? 1.0
+                    : (phaseInfo.rating === 'GOOD') ? 0.8 : 0.6;
+
+    if (moon.overhead) {
+      windows.push({
+        type: 'major',
+        label: 'MAJOR — Moon Overhead',
+        start: this.adjustTime(moon.overhead, -60),
+        end:   this.adjustTime(moon.overhead, 60),
+        center: moon.overhead,
+        strength: Math.round(90 * phaseMult),
+      });
+    }
+    if (moon.underfoot) {
+      windows.push({
+        type: 'major',
+        label: 'MAJOR — Moon Underfoot',
+        start: this.adjustTime(moon.underfoot, -60),
+        end:   this.adjustTime(moon.underfoot, 60),
+        center: moon.underfoot,
+        strength: Math.round(85 * phaseMult),
+      });
+    }
+    if (moon.rise) {
+      windows.push({
+        type: 'minor',
+        label: 'MINOR — Moonrise',
+        start: this.adjustTime(moon.rise, -30),
+        end:   this.adjustTime(moon.rise, 30),
+        center: moon.rise,
+        strength: Math.round(65 * phaseMult),
+      });
+    }
+    if (moon.set) {
+      windows.push({
+        type: 'minor',
+        label: 'MINOR — Moonset',
+        start: this.adjustTime(moon.set, -30),
+        end:   this.adjustTime(moon.set, 30),
+        center: moon.set,
+        strength: Math.round(60 * phaseMult),
+      });
+    }
+    if (sun.rise) {
+      windows.push({
+        type: 'minor',
+        label: 'MINOR — Sunrise',
+        start: this.adjustTime(sun.rise, -30),
+        end:   this.adjustTime(sun.rise, 30),
+        center: sun.rise,
+        strength: Math.round(55 * phaseMult),
+      });
+    }
+    if (sun.set) {
+      windows.push({
+        type: 'minor',
+        label: 'MINOR — Sunset',
+        start: this.adjustTime(sun.set, -30),
+        end:   this.adjustTime(sun.set, 30),
+        center: sun.set,
+        strength: Math.round(50 * phaseMult),
+      });
+    }
+
+    // Sort by time
+    windows.sort((a, b) => this.timeToHours(a.center) - this.timeToHours(b.center));
+
+    return { windows, sun, moon, phase, phaseInfo };
+  },
+
+  isWindowActive(win) {
+    const now = new Date();
+    const h = now.getHours() + now.getMinutes() / 60;
+    const s = this.timeToHours(win.start);
+    const e = this.timeToHours(win.end);
+    return h >= s && h <= e;
+  },
+
+  // Score solunar for current time (0–100)
+  scoreSolunar(date, lat, lon) {
+    const { windows, phase, phaseInfo } = this.feedingWindows(date, lat, lon);
+    const now = new Date();
+    const h = now.getHours() + now.getMinutes() / 60;
+
+    let score = 30; // baseline
+
+    // Phase bonus
+    if (phaseInfo.rating === 'EXCELLENT') score += 20;
+    else if (phaseInfo.rating === 'GOOD') score += 10;
+
+    // Check proximity to any window
+    for (const win of windows) {
+      const wh = this.timeToHours(win.center);
+      const diff = Math.abs(h - wh);
+      const rangeDiff = Math.min(diff, 24 - diff);
+
+      if (rangeDiff < 0.5) score += win.type === 'major' ? 40 : 25;
+      else if (rangeDiff < 1) score += win.type === 'major' ? 25 : 15;
+      else if (rangeDiff < 2) score += win.type === 'major' ? 10 : 5;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+  },
+
+  // Hourly solunar activity (0–100) for next 24h
+  hourlyActivity(date, lat, lon) {
+    const { windows, phase, phaseInfo } = this.feedingWindows(date, lat, lon);
+    const hours = [];
+
+    for (let h = 0; h < 24; h++) {
+      let activity = 20;
+      if (phaseInfo.rating === 'EXCELLENT') activity += 10;
+      else if (phaseInfo.rating === 'GOOD') activity += 5;
+
+      for (const win of windows) {
+        const wh = this.timeToHours(win.center);
+        const diff = Math.abs(h - wh);
+        const rangeDiff = Math.min(diff, 24 - diff);
+        const winHalfWidth = win.type === 'major' ? 1.5 : 0.75;
+
+        if (rangeDiff < winHalfWidth) {
+          const proximity = 1 - rangeDiff / winHalfWidth;
+          activity += (win.type === 'major' ? 50 : 30) * proximity;
+        }
+      }
+
+      hours.push({ h, activity: Math.min(100, Math.round(activity)) });
+    }
+
+    return hours;
+  },
+
+  // Helpers
+  utcHourToLocal(date, utcH) {
+    const utcDate = new Date(date);
+    utcDate.setUTCHours(Math.floor(utcH), Math.round((utcH % 1) * 60), 0, 0);
+    // MDT = UTC-6
+    const localH = (utcH - 6 + 24) % 24;
+    return this.hoursToTime(localH);
+  },
+
+  hoursToTime(h) {
+    const hours = Math.floor(((h % 24) + 24) % 24);
+    const mins = Math.round(((h % 1) + 1) % 1 * 60);
+    const ampm = hours < 12 ? 'AM' : 'PM';
+    const h12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    return `${h12}:${String(mins).padStart(2, '0')} ${ampm}`;
+  },
+
+  timeToHours(timeStr) {
+    if (!timeStr) return 0;
+    const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!match) return 0;
+    let h = parseInt(match[1]);
+    const m = parseInt(match[2]);
+    const ap = match[3].toUpperCase();
+    if (ap === 'PM' && h !== 12) h += 12;
+    if (ap === 'AM' && h === 12) h = 0;
+    return h + m / 60;
+  },
+
+  adjustTime(timeStr, minutes) {
+    const h = this.timeToHours(timeStr) + minutes / 60;
+    return this.hoursToTime(((h % 24) + 24) % 24);
+  },
+};
+
+// ─────────────────────────────────────────
+// HOTSPOT MODULE — Heuristic Scoring
+// ─────────────────────────────────────────
+const HotspotModule = {
+  // All hotspot data with pre-computed geographic factors
+  // Based on real Provo River geography
+  spots: [
+    {
+      id: 'p1',
+      name: 'Murdock Diversion Hole',
+      segment: 'upper',
+      lat: 40.4482, lon: -111.4721,
+      geo: { curvature: 0.9, lowVelocity: 0.7, transition: 0.8, width: 0.6 },
+      species: ['Brown Trout', 'Rainbow Trout'],
+      access: 'Walk-in, 0.3mi from parking',
+      notes: 'Classic tailwater pool below diversion dam. Fish stack here in morning. Midge patterns year-round.',
+    },
+    {
+      id: 'p2',
+      name: 'Deer Creek Inlet',
+      segment: 'middle',
+      lat: 40.4050, lon: -111.5180,
+      geo: { curvature: 0.6, lowVelocity: 0.9, transition: 0.9, width: 0.8 },
+      species: ['Brown Trout', 'Rainbow Trout', 'Brook Trout'],
+      access: 'Roadside, easy',
+      notes: 'Inlet creates temperature and oxygenation differential. Fish congregate at seam edge. Dry fly heaven in summer evenings.',
+    },
+    {
+      id: 'p3',
+      name: 'Bridal Veil Bend',
+      segment: 'upper',
+      lat: 40.4210, lon: -111.4930,
+      geo: { curvature: 0.95, lowVelocity: 0.8, transition: 0.7, width: 0.5 },
+      species: ['Brown Trout', 'Rainbow Trout'],
+      access: 'Canyon Rd pull-off',
+      notes: 'Tight canyon bend. Cutbank on river right holds large browns. Wade with caution — slippery. Best in low light.',
+    },
+    {
+      id: 'p4',
+      name: 'Olmstead Diversion Pool',
+      segment: 'middle',
+      lat: 40.3850, lon: -111.5430,
+      geo: { curvature: 0.7, lowVelocity: 0.85, transition: 0.9, width: 0.7 },
+      species: ['Brown Trout', 'Rainbow Trout'],
+      access: 'Trail from Vivian Park',
+      notes: 'Second major diversion structure. Deep slow pool perfect for streamer fishing. Big browns resident here year-round.',
+    },
+    {
+      id: 'p5',
+      name: 'Vivian Park Riffle Complex',
+      segment: 'middle',
+      lat: 40.3740, lon: -111.5590,
+      geo: { curvature: 0.4, lowVelocity: 0.5, transition: 0.6, width: 0.75 },
+      species: ['Rainbow Trout', 'Brown Trout'],
+      access: 'Vivian Park, easy',
+      notes: 'Long riffle-to-pool sequence. Fish the riffle edges at dawn. Heavy caddis hatches May–July. Bring a #14 Elk Hair Caddis.',
+    },
+    {
+      id: 'p6',
+      name: 'South Fork Confluence',
+      segment: 'lower',
+      lat: 40.3400, lon: -111.5950,
+      geo: { curvature: 0.75, lowVelocity: 0.8, transition: 0.95, width: 0.85 },
+      species: ['Brown Trout', 'Rainbow Trout', 'Mountain Whitefish'],
+      access: 'South Fork Road parking',
+      notes: 'Confluence creates prime feeding lane. Two currents = concentrated food. Fish the seam between flows. PMD hatches epic.',
+    },
+    {
+      id: 'p7',
+      name: 'Lower Canyon Oxbow',
+      segment: 'lower',
+      lat: 40.3186, lon: -111.6008,
+      geo: { curvature: 0.85, lowVelocity: 0.75, transition: 0.65, width: 0.6 },
+      species: ['Brown Trout', 'Mountain Whitefish'],
+      access: 'USGS gauge access road',
+      notes: 'Classic oxbow cut. Slow inside bend deposits food. Fish sit on the bottom in shade. Czech nymphing most effective.',
+    },
+    {
+      id: 'p8',
+      name: 'Provo Canyon Narrows',
+      segment: 'upper',
+      lat: 40.4380, lon: -111.4840,
+      geo: { curvature: 0.55, lowVelocity: 0.4, transition: 0.5, width: 0.3 },
+      species: ['Brown Trout'],
+      access: 'Technical scramble',
+      notes: 'Fast water but deep mid-channel slots hold large fish. High velocity = lower score but experienced anglers do well with heavy rigs.',
+    },
+    {
+      id: 'p9',
+      name: 'Midway Flats Wide Bend',
+      segment: 'middle',
+      lat: 40.3950, lon: -111.5310,
+      geo: { curvature: 0.65, lowVelocity: 0.75, transition: 0.6, width: 0.9 },
+      species: ['Rainbow Trout', 'Brown Trout'],
+      access: 'Hwy 189 turnout',
+      notes: 'Wide section slows water significantly. Fish spread across entire width. Walk and stalk — approach from downstream.',
+    },
+    {
+      id: 'p10',
+      name: 'Canyon Glen Park Pool',
+      segment: 'lower',
+      lat: 40.3280, lon: -111.6090,
+      geo: { curvature: 0.7, lowVelocity: 0.85, transition: 0.7, width: 0.65 },
+      species: ['Rainbow Trout', 'Brown Trout', 'Mountain Whitefish'],
+      access: 'Canyon Glen Park, easy',
+      notes: 'Popular but productive. Large pool with multiple depth zones. Evenings bring rises to Pale Morning Dun and Blue Wing Olive.',
+    },
+  ],
+
+  // Score each hotspot based on geo + current conditions
+  scoreHotspots(riverData) {
+    const flow = riverData?.current?.flow || 150;
+    const trend = riverData?.current?.flowTrend || 'stable';
+
+    return this.spots.map(spot => {
+      const g = spot.geo;
+
+      // Base geo score (heuristic)
+      const geoScore = (
+        g.curvature   * 0.40 +
+        g.lowVelocity * 0.30 +
+        g.transition  * 0.20 +
+        g.width       * 0.10
+      );
+
+      // Flow modifier
+      let flowMod = 1.0;
+      if (flow < 50) {
+        // Low flow: favor deeper/slower spots
+        flowMod = 0.5 + g.lowVelocity * 0.7;
+      } else if (flow > 400) {
+        // High flow: favor slow/wide spots
+        flowMod = 0.4 + g.width * 0.6;
+      } else if (flow >= 80 && flow <= 250) {
+        // Ideal: all spots improve
+        flowMod = 1.0 + g.transition * 0.2;
+      }
+
+      // Trend modifier
+      const trendMod = trend === 'falling' ? 1.1 : trend === 'rising' ? 0.9 : 1.0;
+
+      const finalScore = Math.min(1.0, geoScore * flowMod * trendMod);
+      const score100 = Math.round(finalScore * 100);
+
+      // Build reasons
+      const reasons = [];
+      if (g.curvature > 0.7)   reasons.push({ label: 'Sharp bend', positive: true });
+      if (g.lowVelocity > 0.7) reasons.push({ label: 'Slow water', positive: true });
+      if (g.transition > 0.7)  reasons.push({ label: 'Current seam', positive: true });
+      if (g.width > 0.7)       reasons.push({ label: 'Wide flat', positive: true });
+      if (g.curvature < 0.5)   reasons.push({ label: 'Straight run', positive: false });
+      if (g.lowVelocity < 0.5) reasons.push({ label: 'Fast current', positive: false });
+
+      const level = score100 >= 65 ? 'high' : score100 >= 45 ? 'medium' : 'low';
+
+      return { ...spot, score: score100, level, reasons, geoScore };
+    }).sort((a, b) => b.score - a.score);
+  },
+};
+
+// ─────────────────────────────────────────
+// SCORING MODULE — Global Index
+// ─────────────────────────────────────────
+const ScoringModule = {
+  compute(weatherScore, riverScore, solunarScore) {
+    const score = Math.round(
+      solunarScore * 0.40 +
+      weatherScore * 0.30 +
+      riverScore   * 0.30
+    );
+
+    return {
+      score,
+      weather: weatherScore,
+      river: riverScore,
+      solunar: solunarScore,
+      verdict: this.verdict(score),
+      color: this.color(score),
+    };
+  },
+
+  verdict(s) {
+    if (s >= 81) return 'EXCELLENT';
+    if (s >= 61) return 'GOOD';
+    if (s >= 31) return 'REGULAR';
+    return 'POOR';
+  },
+
+  color(s) {
+    if (s >= 81) return 'var(--score-excellent)';
+    if (s >= 61) return 'var(--score-good)';
+    if (s >= 31) return 'var(--score-regular)';
+    return 'var(--score-bad)';
+  },
+
+  glow(s) {
+    if (s >= 81) return 'rgba(0,229,255,0.08)';
+    if (s >= 61) return 'rgba(105,240,174,0.08)';
+    if (s >= 31) return 'rgba(255,171,0,0.08)';
+    return 'rgba(255,71,87,0.06)';
+  },
+};
+
+// ─────────────────────────────────────────
+// MAP MODULE
+// ─────────────────────────────────────────
+const MapModule = {
+  map: null,
+  markers: [],
+  riverLines: [],
+  initialized: false,
+
+  // Provo River GeoJSON coordinates (real river path)
+  riverSegments: {
+    upper: {
+      name: 'Upper Provo',
+      color: '#00d4ff',
+      coords: [
+        [40.4600, -111.4650], [40.4560, -111.4680], [40.4520, -111.4700],
+        [40.4482, -111.4721], [40.4450, -111.4760], [40.4420, -111.4800],
+        [40.4380, -111.4840], [40.4340, -111.4870], [40.4300, -111.4900],
+        [40.4260, -111.4920], [40.4210, -111.4930], [40.4170, -111.4950],
+        [40.4130, -111.4980], [40.4090, -111.5060], [40.4050, -111.5180],
+      ],
+    },
+    middle: {
+      name: 'Middle Provo',
+      color: '#00bfa5',
+      coords: [
+        [40.4050, -111.5180], [40.4010, -111.5240], [40.3980, -111.5280],
+        [40.3950, -111.5310], [40.3920, -111.5340], [40.3880, -111.5390],
+        [40.3850, -111.5430], [40.3820, -111.5460], [40.3790, -111.5510],
+        [40.3760, -111.5550], [40.3740, -111.5590], [40.3700, -111.5640],
+        [40.3660, -111.5700], [40.3600, -111.5770], [40.3540, -111.5850],
+        [40.3480, -111.5900], [40.3420, -111.5930], [40.3400, -111.5950],
+      ],
+    },
+    lower: {
+      name: 'Lower Provo',
+      color: '#ff6d00',
+      coords: [
+        [40.3400, -111.5950], [40.3360, -111.5980], [40.3320, -111.6030],
+        [40.3280, -111.6090], [40.3250, -111.6140], [40.3220, -111.6170],
+        [40.3200, -111.6010], [40.3186, -111.6008], [40.3160, -111.5970],
+        [40.3130, -111.5950], [40.3100, -111.5910],
+      ],
+    },
+  },
+
+  init() {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    this.map = L.map('map-container', {
+      center: [40.3900, -111.5400],
+      zoom: 12,
+      zoomControl: true,
+      attributionControl: false,
+    });
+
+    // Dark tile layer
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19,
+    }).addTo(this.map);
+
+    // Draw river segments
+    Object.entries(this.riverSegments).forEach(([seg, data]) => {
+      const line = L.polyline(data.coords, {
+        color: data.color,
+        weight: 3,
+        opacity: 0.8,
+      }).addTo(this.map);
+      this.riverLines.push({ seg, line });
+    });
+
+    // USGS station marker
+    L.circleMarker([CONFIG.river.lat, CONFIG.river.lon], {
+      radius: 8,
+      fillColor: '#00d4ff',
+      color: '#fff',
+      weight: 2,
+      fillOpacity: 0.9,
+    }).addTo(this.map)
+      .bindPopup(`<div class="popup-name">USGS Gauge #10163000</div>
+        <div class="popup-detail">Real-time flow & gage height monitoring</div>`);
+
+    setTimeout(() => {
+      this.map.invalidateSize();
+      document.getElementById('map-loading').style.display = 'none';
+    }, 500);
+  },
+
+  renderHotspots(hotspots, activeSegment) {
+    // Clear old markers
+    this.markers.forEach(m => this.map.removeLayer(m));
+    this.markers = [];
+
+    const filtered = activeSegment === 'all' ? hotspots
+      : hotspots.filter(h => h.segment === activeSegment);
+
+    filtered.forEach(spot => {
+      const color = spot.level === 'high'   ? '#00e676'
+                  : spot.level === 'medium' ? '#ffab00'
+                  : '#ff4757';
+
+      const marker = L.circleMarker([spot.lat, spot.lon], {
+        radius: 9,
+        fillColor: color,
+        color: '#0a0f1a',
+        weight: 2,
+        fillOpacity: 0.85,
+      });
+
+      const reasonsHTML = spot.reasons.map(r =>
+        `<span style="display:inline-block; font-size:9px; padding:1px 5px; border-radius:3px; margin:1px;
+          background:${r.positive ? 'rgba(0,191,165,0.2)' : 'rgba(255,71,87,0.15)'};
+          color:${r.positive ? '#00bfa5' : '#ff4757'};
+          border:1px solid ${r.positive ? 'rgba(0,191,165,0.4)' : 'rgba(255,71,87,0.3)'}">
+          ${r.label}</span>`
+      ).join('');
+
+      marker.bindPopup(`
+        <div class="popup-name">${spot.name}</div>
+        <div class="popup-score" style="color:${color}">Score: ${spot.score}/100 — ${spot.level.toUpperCase()}</div>
+        <div style="margin:6px 0">${reasonsHTML}</div>
+        <div class="popup-detail">${spot.notes}</div>
+        <div style="margin-top:6px; font-size:9px; color:#3a5570; font-family:'Space Mono',monospace">${spot.access}</div>
+      `);
+
+      marker.addTo(this.map);
+      this.markers.push(marker);
+    });
+
+    // Adjust map view for segment
+    if (activeSegment !== 'all') {
+      const segCoords = this.riverSegments[activeSegment]?.coords;
+      if (segCoords) {
+        this.map.fitBounds(segCoords, { padding: [30, 30] });
+      }
+    } else {
+      this.map.setView([40.3900, -111.5400], 12);
+    }
+  },
+};
+
+// ─────────────────────────────────────────
+// CHART MODULE
+// ─────────────────────────────────────────
+const ChartModule = {
+  chartDefaults: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: {
+      backgroundColor: '#162232',
+      borderColor: '#1e3045',
+      borderWidth: 1,
+      titleColor: '#e8f0f8',
+      bodyColor: '#7a9ab8',
+      titleFont: { family: "'Space Mono'" },
+    }},
+    scales: {
+      x: {
+        grid: { color: '#1e3045', drawBorder: false },
+        ticks: { color: '#3a5570', font: { family: "'Space Mono'", size: 8 }, maxTicksLimit: 7 },
+      },
+      y: {
+        grid: { color: '#1e3045', drawBorder: false },
+        ticks: { color: '#3a5570', font: { family: "'Space Mono'", size: 8 } },
+      },
+    },
+  },
+
+  renderFlowChart(riverData) {
+    const ctx = document.getElementById('flow-chart').getContext('2d');
+    const data = riverData.flow.slice(-168); // 7 days of hourly
+    // Downsample to ~48 points
+    const step = Math.max(1, Math.floor(data.length / 48));
+    const sampled = data.filter((_, i) => i % step === 0);
+
+    if (State.flowChart) State.flowChart.destroy();
+    State.flowChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: sampled.map(d => {
+          const dt = new Date(d.t);
+          return `${dt.getMonth()+1}/${dt.getDate()} ${dt.getHours()}h`;
+        }),
+        datasets: [{
+          data: sampled.map(d => d.v),
+          borderColor: '#00d4ff',
+          backgroundColor: 'rgba(0,212,255,0.06)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        ...this.chartDefaults,
+        scales: {
+          ...this.chartDefaults.scales,
+          y: { ...this.chartDefaults.scales.y, title: { display: true, text: 'cfs', color: '#3a5570', font: { size: 8 } } },
+        },
+      },
+    });
+  },
+
+  renderGageChart(riverData) {
+    const ctx = document.getElementById('gage-chart').getContext('2d');
+    const data = riverData.gage.slice(-168);
+    const step = Math.max(1, Math.floor(data.length / 48));
+    const sampled = data.filter((_, i) => i % step === 0);
+
+    if (State.gageChart) State.gageChart.destroy();
+    State.gageChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: sampled.map(d => {
+          const dt = new Date(d.t);
+          return `${dt.getMonth()+1}/${dt.getDate()} ${dt.getHours()}h`;
+        }),
+        datasets: [{
+          data: sampled.map(d => d.v),
+          borderColor: '#00bfa5',
+          backgroundColor: 'rgba(0,191,165,0.06)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        ...this.chartDefaults,
+        scales: {
+          ...this.chartDefaults.scales,
+          y: { ...this.chartDefaults.scales.y, title: { display: true, text: 'ft', color: '#3a5570', font: { size: 8 } } },
+        },
+      },
+    });
+  },
+
+  renderSolunarChart(date, lat, lon) {
+    const ctx = document.getElementById('solunar-chart').getContext('2d');
+    const activity = SolunarModule.hourlyActivity(date, lat, lon);
+
+    const colors = activity.map(a => {
+      if (a.activity >= 70) return 'rgba(0,212,255,0.8)';
+      if (a.activity >= 50) return 'rgba(0,191,165,0.7)';
+      return 'rgba(30,48,69,0.5)';
+    });
+
+    if (State.solunarChart) State.solunarChart.destroy();
+    State.solunarChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: activity.map(a => {
+          const h = a.h;
+          if (h === 0) return '12a';
+          if (h === 12) return '12p';
+          if (h < 12) return `${h}a`;
+          return `${h-12}p`;
+        }),
+        datasets: [{
+          data: activity.map(a => a.activity),
+          backgroundColor: colors,
+          borderRadius: 3,
+          borderSkipped: false,
+        }],
+      },
+      options: {
+        ...this.chartDefaults,
+        scales: {
+          ...this.chartDefaults.scales,
+          y: { ...this.chartDefaults.scales.y, min: 0, max: 100 },
+        },
+      },
+    });
+  },
+};
+
+// ─────────────────────────────────────────
+// RIVER SEGMENT DEFINITIONS
+// ─────────────────────────────────────────
+const RIVER_SEGMENTS = [
+  {
+    id: 'upper',
+    name: 'Upper Provo',
+    range: 'Jordanelle → Deer Creek',
+    badge: { label: 'TAILWATER', color: 'var(--accent-cyan)' },
+    desc: 'Classic tailwater fishery below Jordanelle Dam. Cold, clear, and highly regulated temperatures create exceptional year-round trout habitat. Crowded on weekends but holds large fish.',
+    fish: ['Brown Trout', 'Rainbow Trout', 'Cutthroat'],
+    characteristics: 'Freestone + tailwater hybrid. Consistent flows. Multiple diversion structures create holding pools.',
+    bestFlow: '80–180 cfs',
+    hotInfo: 'Midge hatches November–March. Caddis April–June. PMD June–September.',
+  },
+  {
+    id: 'middle',
+    name: 'Middle Provo',
+    range: 'Deer Creek → South Fork Confluence',
+    badge: { label: 'GOLD RIBBON', color: 'var(--accent-green)' },
+    desc: 'The most productive stretch for large trout. Wider valley allows river to slow and meander, creating ideal feeding and holding structure. Wild trout management section.',
+    fish: ['Brown Trout', 'Rainbow Trout', 'Mountain Whitefish'],
+    characteristics: 'Meandering. Rich insect life. Multiple seams and pools. Best overall quality.',
+    bestFlow: '100–280 cfs',
+    hotInfo: 'PMD and Caddis June–August. Blue Wing Olive September–November. Streamers for large browns October–November.',
+  },
+  {
+    id: 'lower',
+    name: 'Lower Provo',
+    range: 'South Fork → Provo City',
+    badge: { label: 'CANYON', color: 'var(--accent-amber)' },
+    desc: 'Steeper gradient through canyon produces faster water with deep slots and plunge pools. Fewer anglers. Technical wading. Holds large brown trout in deeper structure.',
+    fish: ['Brown Trout', 'Mountain Whitefish', 'Rainbow Trout'],
+    characteristics: 'High gradient. Deep pools. Fast runs. Technical wading.',
+    bestFlow: '150–350 cfs',
+    hotInfo: 'Stonefly hatch late May. Terrestrials (hoppers/beetles) July–September. Streamers year-round.',
+  },
+];
+
+// ─────────────────────────────────────────
+// UI RENDER FUNCTIONS
+// ─────────────────────────────────────────
+const UI = {
+  updateStatus(status, text) {
+    const dot = document.getElementById('status-dot');
+    const span = document.getElementById('status-text');
+    dot.className = `pulse-dot ${status}`;
+    span.textContent = text;
+  },
+
+  formatTime(d) {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  },
+
+  renderDashboard(weather, river, score) {
+    const c = weather.current;
+
+    // Score
+    document.getElementById('score-number').textContent = score.score;
+    document.getElementById('score-verdict').textContent = score.verdict;
+    document.getElementById('score-bar').style.width = score.score + '%';
+    document.getElementById('sf-solunar').textContent = score.solunar;
+    document.getElementById('sf-weather').textContent = score.weather;
+    document.getElementById('sf-river').textContent = score.river;
+
+    const hero = document.getElementById('score-hero');
+    hero.style.setProperty('--score-color', score.color);
+    hero.style.setProperty('--score-glow', ScoringModule.glow(score.score));
+
+    // Alert
+    const alert = document.getElementById('main-alert');
+    const flow = river?.current?.flow;
+
+    if (flow && flow > 600) {
+      alert.style.display = 'flex';
+      alert.className = 'alert-banner danger';
+      document.getElementById('alert-icon').textContent = '⚠️';
+      document.getElementById('alert-text').textContent = `CAUTION: Very high flow (${flow} cfs). Dangerous wading conditions. Bank fishing only.`;
+    } else if (score.score >= 81) {
+      alert.style.display = 'flex';
+      alert.className = 'alert-banner good';
+      document.getElementById('alert-icon').textContent = '🔥';
+      document.getElementById('alert-text').textContent = 'Excellent conditions! Multiple favorable factors align today.';
+    } else if (flow && flow < 25) {
+      alert.style.display = 'flex';
+      alert.className = 'alert-banner warning';
+      document.getElementById('alert-icon').textContent = '⚠️';
+      document.getElementById('alert-text').textContent = `Low flow (${flow} cfs). Fish are spooky — approach carefully, use 6x tippet.`;
+    } else {
+      alert.style.display = 'none';
+    }
+
+    // Weather
+    document.getElementById('w-temp').innerHTML = `${Math.round(c.temperature_2m)}<span class="data-card-unit">°F</span>`;
+    document.getElementById('w-feels').textContent = `Feels like ${Math.round(c.apparent_temperature)}°F`;
+    document.getElementById('w-wind').innerHTML = `${Math.round(c.wind_speed_10m)}<span class="data-card-unit">mph</span>`;
+    document.getElementById('w-dir').textContent = `${WeatherModule.windDeg(c.wind_direction_10m)} direction`;
+    document.getElementById('w-pressure').innerHTML = `${Math.round(c.surface_pressure)}<span class="data-card-unit">hPa</span>`;
+    document.getElementById('w-clouds').innerHTML = `${c.cloud_cover}<span class="data-card-unit">%</span>`;
+    document.getElementById('w-desc').textContent = WeatherModule.wmoToDesc(c.weather_code);
+    document.getElementById('w-humidity').innerHTML = `${c.relative_humidity_2m}<span class="data-card-unit">%</span><span style="font-size:14px; color:var(--text-secondary); margin-left:10px;">Dew ${Math.round(c.dew_point_2m)}°F</span>`;
+
+    // Pressure trend (compare to previous hour — we don't have history, so use absolute)
+    const pressTrend = document.getElementById('w-pressure-trend');
+    if (c.surface_pressure >= 1020) {
+      pressTrend.innerHTML = '<span class="pressure-trend pressure-rising">↑ HIGH — Favorable</span>';
+    } else if (c.surface_pressure >= 1013) {
+      pressTrend.innerHTML = '<span class="pressure-trend pressure-stable">→ Stable</span>';
+    } else {
+      pressTrend.innerHTML = '<span class="pressure-trend pressure-falling">↓ LOW — Watch conditions</span>';
+    }
+
+    // River
+    if (river?.current) {
+      document.getElementById('r-flow').innerHTML = `${Math.round(river.current.flow || 0)}<span class="data-card-unit">cfs</span>`;
+      document.getElementById('r-gage').innerHTML = `${(river.current.gage || 0).toFixed(2)}<span class="data-card-unit">ft</span>`;
+
+      const flowRating = river.current.flow;
+      const ratingEl = document.getElementById('r-flow-rating');
+      if (flowRating >= 80 && flowRating <= 250) ratingEl.innerHTML = '<span class="text-green">✓ Optimal range</span>';
+      else if (flowRating > 400) ratingEl.innerHTML = '<span class="text-amber">⚠ Elevated</span>';
+      else if (flowRating < 50) ratingEl.innerHTML = '<span class="text-amber">⚠ Low water</span>';
+      else ratingEl.textContent = 'Fishable';
+
+      const trendIcon = { rising: '↑', falling: '↓', stable: '→' };
+      const trendClass = { rising: 'trend-up', falling: 'trend-down', stable: 'trend-stable' };
+      const t = river.current.flowTrend || 'stable';
+      document.getElementById('r-gage-trend').innerHTML =
+        `<span class="${trendClass[t]}">${trendIcon[t]} ${t}</span>`;
+    }
+
+    // Forecast
+    this.renderForecast(weather.daily);
+
+    // Last updated
+    document.getElementById('last-updated-dash').textContent =
+      `Last updated: ${this.formatTime(new Date())}`;
+  },
+
+  renderForecast(daily) {
+    const strip = document.getElementById('forecast-strip');
+    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    strip.innerHTML = daily.time.map((date, i) => {
+      const d = new Date(date + 'T12:00:00');
+      const isToday = i === 0;
+      return `
+        <div class="forecast-day ${isToday ? 'today' : ''}">
+          <div class="fc-day-name">${isToday ? 'Today' : days[d.getDay()]}</div>
+          <div class="fc-icon">${WeatherModule.wmoToIcon(daily.weather_code[i])}</div>
+          <div class="fc-temp">${Math.round(daily.temperature_2m_max[i])}°</div>
+          <div class="fc-temp-lo">${Math.round(daily.temperature_2m_min[i])}°</div>
+          <div class="fc-wind">${Math.round(daily.wind_speed_10m_max[i])}mph</div>
+        </div>`;
+    }).join('');
+  },
+
+  renderRiverPage(river) {
+    if (!river?.current) return;
+
+    document.getElementById('rv-flow').innerHTML =
+      `${Math.round(river.current.flow || 0)}<span class="data-card-unit">cfs</span>`;
+    document.getElementById('rv-gage').innerHTML =
+      `${(river.current.gage || 0).toFixed(2)}<span class="data-card-unit">ft</span>`;
+
+    const t = river.current.flowTrend || 'stable';
+    const trendIcon = { rising: '↑', falling: '↓', stable: '→' };
+    const trendClass = { rising: 'trend-up', falling: 'trend-down', stable: 'trend-stable' };
+
+    document.getElementById('rv-flow-sub').innerHTML =
+      `<span class="${trendClass[t]}">${trendIcon[t]} ${t} trend (last 6h)</span>`;
+    document.getElementById('rv-gage-sub').innerHTML =
+      `<span class="${trendClass[t]}">${trendIcon[t]} ${t}</span>`;
+
+    document.getElementById('flow-assessment').textContent =
+      RiverModule.assessFlow(river.current.flow);
+
+    document.getElementById('last-updated-river').textContent =
+      `USGS data: ${this.formatTime(new Date())}`;
+
+    // River segments
+    const list = document.getElementById('river-segments-list');
+    list.innerHTML = RIVER_SEGMENTS.map(seg => `
+      <div class="river-segment">
+        <div class="rs-header">
+          <div class="rs-name">${seg.name}</div>
+          <span class="rs-badge" style="background:rgba(0,0,0,0.3); color:${seg.badge.color}; border:1px solid ${seg.badge.color}40">${seg.badge.label}</span>
+        </div>
+        <div style="font-family:var(--font-mono); font-size:9px; color:var(--text-dim); margin-bottom:6px; letter-spacing:0.08em">${seg.range}</div>
+        <div class="rs-desc">${seg.desc}</div>
+        <div style="display:flex; gap:8px; margin-top:6px; font-family:var(--font-mono); font-size:9px; color:var(--text-dim)">
+          <span>Best flow: <strong style="color:var(--text-secondary)">${seg.bestFlow}</strong></span>
+        </div>
+        <div style="margin-top:8px; font-size:11px; color:var(--text-secondary); font-style:italic; line-height:1.5">${seg.hotInfo}</div>
+        <div class="rs-fish" style="margin-top:8px">
+          ${seg.fish.map(f => `<span class="fish-tag">${f}</span>`).join('')}
+        </div>
+      </div>`).join('');
+  },
+
+  renderSolunarPage(date, lat, lon) {
+    const { windows, sun, moon, phase, phaseInfo } = SolunarModule.feedingWindows(date, lat, lon);
+    const illum = SolunarModule.moonIllumination(phase);
+
+    document.getElementById('sol-moon-icon').textContent = phaseInfo.icon;
+    document.getElementById('sol-moon-name').textContent = phaseInfo.name;
+    document.getElementById('sol-moon-illum').textContent = `${illum}% illuminated`;
+    document.getElementById('sol-moon-rating').textContent = phaseInfo.rating + ' for fishing';
+
+    const ratingColor = phaseInfo.rating === 'EXCELLENT' ? 'var(--accent-green)'
+                      : phaseInfo.rating === 'GOOD' ? 'var(--accent-cyan)'
+                      : 'var(--text-secondary)';
+    document.getElementById('sol-moon-rating').style.color = ratingColor;
+    document.getElementById('sol-moon-rating').style.borderColor = ratingColor + '40';
+
+    // Astro times
+    document.getElementById('sol-sunrise').textContent  = sun.rise || '--';
+    document.getElementById('sol-sunset').textContent   = sun.set || '--';
+    document.getElementById('sol-moonrise').textContent = moon.rise || '--';
+    document.getElementById('sol-moonset').textContent  = moon.set || '--';
+
+    // Feeding windows
+    const fwEl = document.getElementById('sol-windows');
+    fwEl.innerHTML = windows.map(win => {
+      const active = SolunarModule.isWindowActive(win);
+      return `<div class="feeding-window ${win.type}">
+        <div>
+          <div class="fw-label">${win.label}</div>
+          <div class="fw-time">${win.start} – ${win.end}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:var(--font-display); font-weight:700; font-size:14px; color:${win.type === 'major' ? 'var(--accent-cyan)' : 'var(--text-secondary)'}">
+            ${win.strength}
+          </div>
+          ${active ? '<div class="fw-active">● ACTIVE NOW</div>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    // Dashboard feeding windows
+    const dfwEl = document.getElementById('dashboard-feeding-windows');
+    dfwEl.innerHTML = windows.slice(0, 4).map(win => {
+      const active = SolunarModule.isWindowActive(win);
+      return `<div class="feeding-window ${win.type}" style="margin-bottom:6px">
+        <div>
+          <div class="fw-label">${win.label.split('—')[0].trim()}</div>
+          <div class="fw-time">${win.start} – ${win.end}</div>
+        </div>
+        ${active ? '<div class="fw-active">● NOW</div>' : ''}
+      </div>`;
+    }).join('');
+
+    // 7-day lunar outlook
+    const lunarEl = document.getElementById('lunar-7day');
+    lunarEl.innerHTML = Array.from({length: 7}, (_, i) => {
+      const d = new Date(date);
+      d.setDate(d.getDate() + i);
+      const p = SolunarModule.moonPhase(d);
+      const info = SolunarModule.moonPhaseName(p);
+      const illum = SolunarModule.moonIllumination(p);
+      const score = SolunarModule.scoreSolunar(d, lat, lon);
+      const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      return `<div style="background:var(--bg-panel); border:1px solid var(--border); border-radius:8px; padding:10px 14px; display:flex; align-items:center; gap:12px">
+        <div style="font-size:22px">${info.icon}</div>
+        <div style="flex:1">
+          <div style="font-family:var(--font-display); font-weight:700; font-size:13px; color:var(--text-primary)">${i === 0 ? 'Today' : days[d.getDay()]} — ${info.name}</div>
+          <div style="font-family:var(--font-mono); font-size:9px; color:var(--text-secondary); margin-top:2px">${illum}% illuminated · ${info.rating}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:var(--font-display); font-weight:800; font-size:20px; color:${ScoringModule.color(score)}">${score}</div>
+          <div style="font-family:var(--font-mono); font-size:8px; color:var(--text-dim)">SOLUNAR</div>
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  renderHotspotList(hotspots, segment) {
+    const list = document.getElementById('hotspot-list');
+    const filtered = segment === 'all' ? hotspots : hotspots.filter(h => h.segment === segment);
+
+    list.innerHTML = filtered.map(spot => {
+      const barColor = spot.level === 'high' ? 'var(--accent-green)'
+                     : spot.level === 'medium' ? 'var(--accent-amber)'
+                     : 'var(--accent-red)';
+      const badgeClass = `badge-${spot.level}`;
+
+      return `<div class="hotspot-card" onclick="MapModule.map && MapModule.map.setView([${spot.lat},${spot.lon}], 14); document.querySelector('[data-tab=map]').click()">
+        <div class="hotspot-header">
+          <div class="hotspot-name">${spot.name}</div>
+          <span class="hotspot-score-badge ${badgeClass}">${spot.score}/100</span>
+        </div>
+        <div style="font-family:var(--font-mono); font-size:9px; color:var(--text-dim); margin-bottom:8px; letter-spacing:0.08em">
+          ${spot.segment.toUpperCase()} · ${spot.access}
+        </div>
+        <div class="hotspot-factors">
+          ${spot.reasons.map(r => `<span class="factor-tag ${r.positive ? 'positive' : ''}">${r.label}</span>`).join('')}
+          ${spot.species.map(s => `<span class="factor-tag">${s}</span>`).join('')}
+        </div>
+        <div class="hotspot-rec">${spot.notes}</div>
+        <div class="hotspot-score-bar-wrap">
+          <div class="hotspot-score-bar" style="width:${spot.score}%; background:${barColor}"></div>
+        </div>
+      </div>`;
+    }).join('');
+  },
+};
+
+// ─────────────────────────────────────────
+// MAIN APP
+// ─────────────────────────────────────────
+const App = {
+  async init() {
+    this.setupTabs();
+    this.setupRefresh();
+    await this.loadAll();
+  },
+
+  setupTabs() {
+    document.querySelectorAll('.nav-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(`tab-${tab}`).classList.add('active');
+
+        if (tab === 'map' && !MapModule.initialized) {
+          setTimeout(() => {
+            MapModule.init();
+            if (State.hotspots.length) {
+              MapModule.renderHotspots(State.hotspots, State.activeSegment);
+            }
+          }, 100);
+        } else if (tab === 'map' && MapModule.initialized) {
+          setTimeout(() => MapModule.map.invalidateSize(), 100);
+        }
+      });
+    });
+
+    // Segment tabs on map page
+    document.querySelectorAll('.seg-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.seg-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        State.activeSegment = btn.dataset.seg;
+        if (MapModule.initialized && State.hotspots.length) {
+          MapModule.renderHotspots(State.hotspots, State.activeSegment);
+        }
+        UI.renderHotspotList(State.hotspots, State.activeSegment);
+      });
+    });
+  },
+
+  setupRefresh() {
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+      // Clear cache and reload
+      Object.keys(localStorage).filter(k => k.startsWith('provo_')).forEach(k => localStorage.removeItem(k));
+      this.loadAll();
+    });
+  },
+
+  async loadAll() {
+    UI.updateStatus('loading', 'LOADING');
+    const lat = CONFIG.river.lat;
+    const lon = CONFIG.river.lon;
+    const now = new Date();
+
+    try {
+      // Load weather and river in parallel
+      const [weather, river] = await Promise.all([
+        WeatherModule.fetch().catch(e => {
+          console.warn('Weather failed:', e);
+          return null;
+        }),
+        RiverModule.fetch().catch(e => {
+          console.warn('USGS failed:', e);
+          return null;
+        }),
+      ]);
+
+      State.weather = weather;
+      State.river = river;
+
+      // Compute scores
+      const wScore = weather ? WeatherModule.scoreWeather(weather) : 50;
+      const rScore = river ? RiverModule.scoreRiver(river) : 50;
+      const sScore = SolunarModule.scoreSolunar(now, lat, lon);
+      State.score = ScoringModule.compute(wScore, rScore, sScore);
+
+      // Hotspots
+      State.hotspots = HotspotModule.scoreHotspots(river);
+
+      // Render pages
+      if (weather && river) UI.renderDashboard(weather, river, State.score);
+      if (river) {
+        UI.renderRiverPage(river);
+        ChartModule.renderFlowChart(river);
+        ChartModule.renderGageChart(river);
+      }
+      UI.renderSolunarPage(now, lat, lon);
+      ChartModule.renderSolunarChart(now, lat, lon);
+      UI.renderHotspotList(State.hotspots, State.activeSegment);
+
+      UI.updateStatus('', 'LIVE');
+      State.lastUpdate = new Date();
+
+    } catch (err) {
+      console.error('Load error:', err);
+      UI.updateStatus('error', 'ERROR');
+    }
+  },
+};
+
+// ─────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => App.init());
+
+// Service Worker registration
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
