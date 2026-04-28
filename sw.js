@@ -1,57 +1,66 @@
-// Provo River Fishing Intelligence — Service Worker v1.0
+// ============================================================
+// SERVICE WORKER — Provo River Fishing Index PWA
+// ============================================================
 
-const CACHE = 'provo-v1';
-
-const STATIC = [
-  './',
-  './index.html',
+const CACHE_NAME = 'provo-fishing-v1';
+const STATIC_ASSETS = [
+  '/',
+  '/index.html',
+  '/css/main.css',
+  '/js/config.js',
+  '/js/utils.js',
+  '/js/solunar.js',
+  '/js/usgs.js',
+  '/js/weather.js',
+  '/js/fishingIndex.js',
+  '/js/map.js',
+  '/js/charts.js',
+  '/js/ui.js',
+  '/js/app.js',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
 ];
 
-self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE)
-      .then(c => c.addAll(STATIC))
-      .then(() => self.skipWaiting())
+// Install: cache static assets
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
   );
+  self.skipWaiting();
 });
 
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
+// Activate: clean old caches
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+    )
   );
+  self.clients.claim();
 });
 
-self.addEventListener('fetch', e => {
-  const url = e.request.url;
-  const isData = /open-meteo\.com|usgs\.gov/.test(url);
-  const isCDN  = /unpkg\.com|jsdelivr\.net|fonts\.|cartocdn\.com/.test(url);
+// Fetch: cache-first for static, network-first for APIs
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
 
-  if (isData) {
-    // Network-first: fresh data, fall back to cache when offline
-    e.respondWith(
-      fetch(e.request)
-        .then(r => { caches.open(CACHE).then(c => c.put(e.request, r.clone())); return r; })
-        .catch(() => caches.match(e.request))
+  // API calls — network first, fallback to cache
+  if (url.hostname.includes('waterservices.usgs.gov') ||
+      url.hostname.includes('api.weather.gov')) {
+    event.respondWith(
+      fetch(event.request)
+        .then(res => {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          return res;
+        })
+        .catch(() => caches.match(event.request))
     );
-  } else if (isCDN) {
-    // Cache-first: CDN assets rarely change
-    e.respondWith(
-      caches.match(e.request)
-        .then(cached => cached || fetch(e.request).then(r => {
-          caches.open(CACHE).then(c => c.put(e.request, r.clone())); return r;
-        }))
-    );
-  } else {
-    // Stale-while-revalidate for app shell
-    e.respondWith(
-      caches.match(e.request).then(cached => {
-        const net = fetch(e.request).then(r => {
-          caches.open(CACHE).then(c => c.put(e.request, r.clone())); return r;
-        }).catch(() => cached);
-        return cached || net;
-      })
-    );
+    return;
   }
+
+  // Static assets — cache first
+  event.respondWith(
+    caches.match(event.request).then(cached => cached || fetch(event.request))
+  );
 });
