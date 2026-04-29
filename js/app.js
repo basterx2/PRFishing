@@ -1,264 +1,304 @@
 // ============================================================
-// APP — Main orchestrator
-// Provo River Fishing Index PWA
+// APP — Main orchestrator v2
+// Bulletproof init — splash ALWAYS hides
 // ============================================================
 
 const App = (() => {
 
-  // ── State ─────────────────────────────────────────────────
   const state = {
     selectedDayIndex: 0,
     days: [],
     forecast: null,
     riverData: null,
     historicalData: null,
-    hourlyData: null,
     solunar: null,
     currentResult: null,
     mapInitialized: false,
-    chartsRendered: false,
   };
 
-  // ── Boot sequence ─────────────────────────────────────────
+  // ── Boot — wrapped in triple safety net ──────────────────
   async function init() {
-    UI.setSplashStatus('Loading river conditions...');
+    try {
+      await boot();
+    } catch(e) {
+      console.error('Boot error:', e);
+      emergencyRender();
+    } finally {
+      // ALWAYS hide splash, no matter what
+      safeSplashHide();
+    }
+  }
 
-    // Generate 7-day array starting today
+  async function boot() {
+    UI.setSplashStatus('Building calendar...');
+
     const today = new Date();
+    today.setHours(0,0,0,0);
     state.days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() + i);
-      d.setHours(0, 0, 0, 0);
-      return d;
+      const d = new Date(today); d.setDate(d.getDate() + i); return d;
     });
 
-    // Fetch all data in parallel
-    try {
-      UI.setSplashStatus('Fetching weather & river data...');
-      const [forecast, riverData, historicalData, hourlyData] = await Promise.all([
-        Weather.fetchForecast(),
-        USGS.fetchCurrentConditions(),
-        USGS.fetchHistoricalData(7),
-        Weather.fetchHourly(),
-      ]);
+    UI.setSplashStatus('Fetching river & weather data...');
 
-      state.forecast = forecast;
-      state.riverData = riverData;
-      state.historicalData = historicalData;
-      state.hourlyData = hourlyData;
+    // Fetch data — each request has its own fallback, so Promise.allSettled is safe
+    const [fxRes, riverRes, histRes] = await Promise.allSettled([
+      Weather.fetchForecast(),
+      USGS.fetchCurrentConditions(),
+      USGS.fetchHistoricalData(7),
+    ]);
 
-      if (riverData.mock) Utils.toast('Using demo data — check your connection');
-    } catch(e) {
-      console.error('Init fetch error:', e);
-      // Use mock data
-      state.forecast = await Weather.fetchForecast(); // will return mock
-      state.riverData = { flow: 285, gauge: 2.45, waterTemp: null, trend: '→ Stable', mock: true };
-      state.historicalData = { flowSeries: [], gaugeSeries: [], tempSeries: [], mock: true };
+    state.forecast      = fxRes.status    === 'fulfilled' ? fxRes.value    : Weather.fetchForecast().catch(() => null) && getMockForecast();
+    state.riverData     = riverRes.status === 'fulfilled' ? riverRes.value : getMockRiver();
+    state.historicalData = histRes.status === 'fulfilled' ? histRes.value  : getMockHistorical();
+
+    // Final safety: ensure forecast is never null
+    if (!state.forecast || !state.forecast.days) {
+      state.forecast = buildMockForecast();
+    }
+    if (!state.riverData) {
+      state.riverData = getMockRiver();
     }
 
-    UI.setSplashStatus('Calculating solunar periods...');
+    UI.setSplashStatus('Computing solunar periods...');
 
-    // Init UI components
+    // Wire up UI
     initEventHandlers();
     UI.initTabs(onTabChange);
     UI.initZoneButtons(zone => RiverMap.filterZone(zone));
-
-    // Render initial day
     UI.renderDateStrip(state.days, 0, onDaySelect);
-    await renderDay(0);
 
-    UI.hideSplash();
+    UI.setSplashStatus('Rendering dashboard...');
+    await renderDay(0);
   }
 
   // ── Render a specific day ─────────────────────────────────
   async function renderDay(dayIndex) {
-    state.selectedDayIndex = dayIndex;
-    const date = state.days[dayIndex];
-    const isToday = dayIndex === 0;
+    try {
+      state.selectedDayIndex = dayIndex;
+      const date    = state.days[dayIndex];
+      const isToday = dayIndex === 0;
 
-    // Solunar for this day
-    state.solunar = Solunar.getSolunarPeriods(
-      date,
-      CONFIG.river.lat,
-      CONFIG.river.lon
-    );
+      // Solunar — wrapped in try/catch
+      try {
+        state.solunar = Solunar.getSolunarPeriods(date, CONFIG.river.lat, CONFIG.river.lon);
+      } catch(e) {
+        console.warn('Solunar failed:', e.message);
+        state.solunar = getSolunarFallback(date);
+      }
 
-    // Weather for this day
-    const wxDay = state.forecast?.days?.[dayIndex] || state.forecast?.current;
+      const wxDay = state.forecast?.days?.[dayIndex] || state.forecast?.days?.[0] || null;
+      const airTempC = wxDay?.tempC ?? 15;
 
-    // Water temp: use USGS if today, estimate otherwise
-    const airTempC = wxDay?.tempC || 15;
-    const waterTempC = (isToday && state.riverData?.waterTemp != null)
-      ? state.riverData.waterTemp
-      : USGS.estimateWaterTemp(airTempC, date);
+      const waterTempC = (isToday && state.riverData?.waterTemp != null)
+        ? state.riverData.waterTemp
+        : USGS.estimateWaterTemp(airTempC, date);
 
-    // Stability score
-    const stabilityScore = Weather.stabilityScore(state.forecast);
+      const stabilityScore = Weather.stabilityScore(state.forecast);
 
-    // Build params
-    const params = {
-      solunarScore:   state.solunar.solunarScore,
-      waterTempC,
-      flowCfs:        isToday ? state.riverData?.flow : null,
-      airTempC,
-      cloudCoverPct:  wxDay?.cloudCover || 50,
-      pressureTrend:  'stable',
-      precipProb:     wxDay?.probabilityOfPrecipitation || 0,
-      windSpeed:      wxDay?.windSpeed || 0,
-      stabilityScore,
-      date,
-      sunRise:        state.solunar.sunRise,
-      sunSet:         state.solunar.sunSet,
-    };
-
-    // Calculate index
-    state.currentResult = FishingIndex.calculate(params);
-
-    // Hourly scores for time bar
-    const hourlyScores = FishingIndex.getHourlyScores(
-      {
-        solunarScore:   params.solunarScore,
-        waterTempScore: USGS.waterTempScore(waterTempC),
-        flowScore:      USGS.flowScore(params.flowCfs),
-        pressureScore:  Weather.pressureScore(860, 'stable'),
-        cloudScore:     Weather.cloudCoverScore(params.cloudCoverPct),
+      const params = {
+        solunarScore:  state.solunar.solunarScore,
+        waterTempC,
+        flowCfs:       isToday ? (state.riverData?.flow ?? null) : null,
+        airTempC,
+        cloudCoverPct: wxDay?.cloudCover ?? 50,
+        pressureTrend: 'stable',
+        precipProb:    wxDay?.probabilityOfPrecipitation ?? 0,
+        windSpeed:     wxDay?.windSpeed ?? 5,
         stabilityScore,
-      },
-      state.solunar.sunRise,
-      state.solunar.sunSet
-    );
+        date,
+        sunRise: state.solunar.sunRise,
+        sunSet:  state.solunar.sunSet,
+      };
 
-    // Recommendations
-    const recs = FishingIndex.getRecommendations(state.currentResult, {
-      waterTempC,
-      flowCfs:       params.flowCfs,
-      cloudCoverPct: params.cloudCoverPct,
-      windSpeed:     params.windSpeed,
-    });
+      state.currentResult = FishingIndex.calculate(params);
 
-    // ── Update DOM ────────────────────────────────────────────
-    UI.renderHero(state.currentResult);
-    UI.renderBestTimeBar(hourlyScores);
-    UI.renderSolunar(state.solunar);
-    UI.renderWeather(wxDay, isToday);
-    UI.renderRiver(
-      isToday ? state.riverData : { flow: null, gauge: null, waterTemp: null, trend: '—' },
-      airTempC,
-      date
-    );
-    UI.renderBreakdown(state.currentResult.breakdown);
-    UI.renderRecommendations(recs);
-    UI.renderForecast(
-      state.forecast?.days || [],
-      state.riverData,
-      onDaySelect,
-      dayIndex
-    );
+      const hourlyScores = FishingIndex.getHourlyScores(
+        {
+          solunarScore:   params.solunarScore,
+          waterTempScore: USGS.waterTempScore(waterTempC),
+          flowScore:      USGS.flowScore(params.flowCfs),
+          pressureScore:  Weather.pressureScore(860, 'stable'),
+          cloudScore:     Weather.cloudCoverScore(params.cloudCoverPct),
+          stabilityScore,
+        },
+        state.solunar.sunRise,
+        state.solunar.sunSet
+      );
 
-    // Update map spots with new score
-    if (state.mapInitialized) {
-      RiverMap.updateWithScore(state.currentResult.score);
+      const recs = FishingIndex.getRecommendations(state.currentResult, {
+        waterTempC, flowCfs: params.flowCfs,
+        cloudCoverPct: params.cloudCoverPct, windSpeed: params.windSpeed,
+      });
+
+      UI.renderHero(state.currentResult);
+      UI.renderBestTimeBar(hourlyScores);
+      UI.renderSolunar(state.solunar);
+      UI.renderWeather(wxDay, isToday);
+      UI.renderRiver(
+        isToday ? state.riverData : { flow:null, gauge:null, waterTemp:null, trend:'—' },
+        airTempC, date
+      );
+      UI.renderBreakdown(state.currentResult.breakdown);
+      UI.renderRecommendations(recs);
+      UI.renderForecast(state.forecast?.days || [], state.riverData, onDaySelect, dayIndex);
+
+      if (state.mapInitialized) RiverMap.updateWithScore(state.currentResult.score);
+
+    } catch(e) {
+      console.error('renderDay error:', e);
+      // Show partial data rather than crashing
+      UI.renderHero({ score: 55, rating: 'Good', ratingClass: 'rating-good',
+        breakdown: [], components: {} });
     }
   }
 
-  // ── Day selection handler ─────────────────────────────────
+  // ── Emergency render when everything fails ────────────────
+  function emergencyRender() {
+    console.warn('Emergency render triggered');
+    if (!state.forecast) state.forecast = buildMockForecast();
+    if (!state.riverData) state.riverData = getMockRiver();
+    if (!state.days.length) {
+      const today = new Date(); today.setHours(0,0,0,0);
+      state.days = Array.from({length:7}, (_,i) => { const d=new Date(today); d.setDate(d.getDate()+i); return d; });
+    }
+    try {
+      initEventHandlers();
+      UI.initTabs(onTabChange);
+      UI.initZoneButtons(zone => RiverMap.filterZone(zone));
+      UI.renderDateStrip(state.days, 0, onDaySelect);
+      renderDay(0);
+    } catch(e2) {
+      console.error('Emergency render also failed:', e2);
+    }
+    Utils.toast('Running in offline mode');
+  }
+
+  function safeSplashHide() {
+    try { UI.hideSplash(); } catch(e) {
+      // Manual fallback
+      const splash = document.getElementById('splash');
+      const app    = document.getElementById('app');
+      if (splash) { splash.style.opacity = '0'; splash.style.pointerEvents = 'none'; }
+      if (app)    app.classList.remove('hidden');
+    }
+  }
+
+  // ── Day selection ─────────────────────────────────────────
   async function onDaySelect(idx) {
     if (idx === state.selectedDayIndex) return;
     UI.renderDateStrip(state.days, idx, onDaySelect);
     await renderDay(idx);
-    Utils.toast(`Showing forecast for ${Utils.formatDay(state.days[idx])}`);
+    Utils.toast(`Forecast: ${Utils.formatDay(state.days[idx])}`);
   }
 
-  // ── Tab change handler ────────────────────────────────────
+  // ── Tab change ────────────────────────────────────────────
   function onTabChange(tab) {
-    if (tab === 'map' && !state.mapInitialized) {
-      RiverMap.init();
-      state.mapInitialized = true;
-      if (state.currentResult) RiverMap.updateWithScore(state.currentResult.score);
-    } else if (tab === 'map') {
-      RiverMap.invalidate();
+    if (tab === 'map') {
+      if (!state.mapInitialized) {
+        try { RiverMap.init(); state.mapInitialized = true; } catch(e) { console.warn('Map init failed:', e); }
+        if (state.currentResult) RiverMap.updateWithScore(state.currentResult.score);
+      } else {
+        RiverMap.invalidate();
+      }
     }
-
     if (tab === 'charts' && state.historicalData) {
-      const forecastScores = UI.buildForecastScores(
-        state.forecast?.days || [],
-        state.riverData
-      );
-      Charts.renderAll(state.historicalData, forecastScores, Utils.isCelsius());
+      try {
+        const scores = UI.buildForecastScores(state.forecast?.days || [], state.riverData);
+        Charts.renderAll(state.historicalData, scores, Utils.isCelsius());
+      } catch(e) { console.warn('Charts failed:', e); }
     }
-
-    if (tab === 'forecast' && state.forecast) {
-      UI.renderForecast(
-        state.forecast.days,
-        state.riverData,
-        onDaySelect,
-        state.selectedDayIndex
-      );
+    if (tab === 'forecast') {
+      try {
+        UI.renderForecast(state.forecast?.days || [], state.riverData, onDaySelect, state.selectedDayIndex);
+      } catch(e) { console.warn('Forecast render failed:', e); }
     }
   }
 
   // ── Event handlers ────────────────────────────────────────
   function initEventHandlers() {
-    // Unit toggle
-    document.getElementById('unitToggle').addEventListener('click', function() {
-      const isCelsius = Utils.toggleUnits();
-      this.textContent = isCelsius ? '°C' : '°F';
-      // Re-render weather and river
-      const wxDay = state.forecast?.days?.[state.selectedDayIndex];
-      const date  = state.days[state.selectedDayIndex];
-      UI.renderWeather(wxDay, state.selectedDayIndex === 0);
-      UI.renderRiver(
-        state.selectedDayIndex === 0 ? state.riverData : { flow:null, gauge:null, waterTemp:null, trend:'—' },
-        wxDay?.tempC,
-        date
-      );
-      // Re-render forecast (temperatures)
-      UI.renderForecast(
-        state.forecast?.days || [],
-        state.riverData,
-        onDaySelect,
-        state.selectedDayIndex
-      );
-      // Re-render charts if visible
-      const chartsTab = document.getElementById('tab-charts');
-      if (chartsTab?.classList.contains('active') && state.historicalData) {
-        const scores = UI.buildForecastScores(state.forecast?.days || [], state.riverData);
-        Charts.renderAll(state.historicalData, scores, Utils.isCelsius());
-      }
-      Utils.toast(`Switched to ${isCelsius ? 'Celsius' : 'Fahrenheit'}`);
-    });
+    const unitBtn = document.getElementById('unitToggle');
+    if (unitBtn) {
+      unitBtn.addEventListener('click', function() {
+        const isCelsius = Utils.toggleUnits();
+        this.textContent = isCelsius ? '°C' : '°F';
+        const wxDay = state.forecast?.days?.[state.selectedDayIndex];
+        const date  = state.days[state.selectedDayIndex];
+        UI.renderWeather(wxDay, state.selectedDayIndex === 0);
+        UI.renderRiver(
+          state.selectedDayIndex === 0 ? state.riverData : {flow:null,gauge:null,waterTemp:null,trend:'—'},
+          wxDay?.tempC, date
+        );
+        UI.renderForecast(state.forecast?.days||[], state.riverData, onDaySelect, state.selectedDayIndex);
+        const chartsTab = document.getElementById('tab-charts');
+        if (chartsTab?.classList.contains('active') && state.historicalData) {
+          const scores = UI.buildForecastScores(state.forecast?.days||[], state.riverData);
+          Charts.renderAll(state.historicalData, scores, Utils.isCelsius());
+        }
+        Utils.toast(`Units: ${isCelsius ? 'Celsius' : 'Fahrenheit'}`);
+      });
+    }
 
-    // Settings button (placeholder)
-    document.getElementById('settingsBtn').addEventListener('click', () => {
-      Utils.toast('Settings coming soon');
-    });
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) settingsBtn.addEventListener('click', () => Utils.toast('Settings coming soon'));
 
-    // PWA install prompt
-    let deferredPrompt;
-    window.addEventListener('beforeinstallprompt', e => {
-      e.preventDefault();
-      deferredPrompt = e;
-      // Could show custom install button here
-    });
-
-    // Refresh on visibility change (when user returns to app)
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        const now = Date.now();
         const lastRefresh = parseInt(localStorage.getItem('lastRefresh') || '0');
-        if (now - lastRefresh > 30 * 60 * 1000) { // 30 min
-          localStorage.setItem('lastRefresh', now);
-          // Silent refresh current day
+        if (Date.now() - lastRefresh > 30 * 60000) {
+          localStorage.setItem('lastRefresh', Date.now());
           renderDay(state.selectedDayIndex);
         }
       }
     });
 
-    localStorage.setItem('lastRefresh', Date.now());
+    try { localStorage.setItem('lastRefresh', Date.now()); } catch(e) { /* ignore */ }
+  }
+
+  // ── Fallback data generators ──────────────────────────────
+  function getMockRiver() {
+    return { flow: 285, gauge: 2.45, waterTemp: null, trend: '→ Stable', mock: true };
+  }
+
+  function getMockHistorical() {
+    return { flowSeries: [], gaugeSeries: [], tempSeries: [], mock: true };
+  }
+
+  function buildMockForecast() {
+    const descs = ['Sunny','Partly Cloudy','Mostly Cloudy','Chance of Rain','Clear','Sunny','Partly Sunny'];
+    const temps  = [17, 15, 13, 12, 16, 18, 15];
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(); date.setDate(date.getDate() + i); date.setHours(0,0,0,0);
+      return {
+        date, dateStr: Utils.toISODate(date), dayLabel: Utils.formatDay(date),
+        shortForecast: descs[i], detailedForecast: '',
+        tempC: temps[i], nightTempC: temps[i] - 7,
+        windSpeed: 8, windDir: 'SW',
+        probabilityOfPrecipitation: i === 3 ? 40 : 5,
+        cloudCover: Weather.estimateCloudCover(descs[i]),
+        weatherIcon: Utils.weatherIcon(descs[i]),
+        isDaytime: true, humidity: 45,
+      };
+    });
+    return { days, current: days[0], basePressure: 860, pressureStable: true };
+  }
+
+  function getSolunarFallback(date) {
+    const r = new Date(date); r.setHours(6,30,0,0);
+    const s = new Date(date); s.setHours(20,0,0,0);
+    return {
+      periods:[
+        { type:'major', label:'Major (Moonrise)',  time:new Date(date.getFullYear(),date.getMonth(),date.getDate(),6,0),  duration:120 },
+        { type:'minor', label:'Minor',             time:new Date(date.getFullYear(),date.getMonth(),date.getDate(),12,0), duration:60  },
+        { type:'major', label:'Major (Moonset)',   time:new Date(date.getFullYear(),date.getMonth(),date.getDate(),18,0), duration:120 },
+        { type:'minor', label:'Minor',             time:new Date(date.getFullYear(),date.getMonth(),date.getDate(),21,0), duration:60  },
+      ],
+      moonPhase:0.25, phaseInfo:{name:'Waxing Crescent',emoji:'🌒'},
+      phaseScore:55, periodScore:40, solunarScore:46,
+      moonRise:r, moonSet:s, sunRise:r, sunSet:s,
+    };
   }
 
   return { init };
 })();
 
-// ── Start app when DOM is ready ────────────────────────────
 document.addEventListener('DOMContentLoaded', () => App.init());

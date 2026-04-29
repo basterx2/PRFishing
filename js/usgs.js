@@ -1,203 +1,167 @@
 // ============================================================
-// USGS — River data from waterservices.usgs.gov
+// USGS — River data v2 (mobile-safe, shorter timeout)
 // ============================================================
 
 const USGS = (() => {
 
-  const BASE = CONFIG.usgs.baseUrl;
+  const BASE    = CONFIG.usgs.baseUrl;
   const STATION = CONFIG.usgs.stationId;
 
-  // ── Parameter codes ──────────────────────────────────────
-  // 00060 = Discharge (cfs)
-  // 00065 = Gauge height (ft)
-  // 00010 = Water temperature (°C)
-
   async function fetchCurrentConditions() {
-    const cacheKey = `usgs_current_${STATION}`;
+    const cacheKey = `usgs_cur_v2_${STATION}`;
     const cached = Utils.cacheGet(cacheKey);
     if (cached) return cached;
 
     try {
-      // Fetch flow, gauge height, and water temp (if available)
-      const url = `${BASE}/iv/?sites=${STATION}&parameterCd=00060,00065,00010&siteStatus=all&format=json&period=PT2H`;
-      const data = await Utils.fetchWithTimeout(url);
-
+      // Use shorter period and timeout — mobile networks are slow
+      const url = `${BASE}/iv/?sites=${STATION}&parameterCd=00060,00065,00010&siteStatus=all&format=json&period=PT3H`;
+      const data = await Utils.fetchWithTimeout(url, 9000);
+      if (!data?.value?.timeSeries) throw new Error('No timeSeries in USGS response');
       const result = parseCurrentData(data);
       Utils.cacheSet(cacheKey, result, CONFIG.cache.usgs);
       return result;
     } catch(e) {
-      console.warn('USGS current fetch failed:', e.message);
+      console.warn('USGS current failed:', e.message);
       return getMockCurrentData();
     }
   }
 
   async function fetchHistoricalData(days = 7) {
-    const cacheKey = `usgs_hist_${STATION}_${days}`;
+    const cacheKey = `usgs_hist_v2_${STATION}_${days}`;
     const cached = Utils.cacheGet(cacheKey);
     if (cached) return cached;
 
     try {
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-
-      const start = Utils.toISODate(startDate);
-      const end   = Utils.toISODate(endDate);
-
+      const end   = Utils.toISODate(new Date());
+      const start = Utils.toISODate(new Date(Date.now() - days * 86400000));
       const url = `${BASE}/dv/?sites=${STATION}&parameterCd=00060,00065,00010&startDT=${start}&endDT=${end}&siteStatus=all&format=json`;
-      const data = await Utils.fetchWithTimeout(url);
-
+      const data = await Utils.fetchWithTimeout(url, 9000);
+      if (!data?.value?.timeSeries) throw new Error('No timeSeries in USGS historical');
       const result = parseHistoricalData(data);
       Utils.cacheSet(cacheKey, result, CONFIG.cache.usgs);
       return result;
     } catch(e) {
-      console.warn('USGS historical fetch failed:', e.message);
+      console.warn('USGS historical failed:', e.message);
       return getMockHistoricalData(days);
     }
   }
 
-  // ── Parse current IV data ────────────────────────────────
   function parseCurrentData(data) {
-    const ts = data?.value?.timeSeries || [];
+    const ts = data.value.timeSeries || [];
     let flow = null, gauge = null, waterTemp = null;
 
     for (const series of ts) {
-      const code = series.variable?.variableCode?.[0]?.value;
-      const values = series.values?.[0]?.value || [];
-      const latest = values.filter(v => v.value !== '-999999').pop();
-      if (!latest) continue;
-      const val = parseFloat(latest.value);
-
-      if (code === '00060') flow = val;
-      if (code === '00065') gauge = val;
-      if (code === '00010') waterTemp = val;
+      try {
+        const code   = series.variable?.variableCode?.[0]?.value;
+        const values = series.values?.[0]?.value || [];
+        const latest = values.filter(v => v.value !== '-999999' && v.value !== 'Ice').pop();
+        if (!latest) continue;
+        const val = parseFloat(latest.value);
+        if (isNaN(val)) continue;
+        if (code === '00060') flow = val;
+        if (code === '00065') gauge = val;
+        if (code === '00010') waterTemp = val;
+      } catch(e) { /* skip bad series */ }
     }
 
-    const trend = computeFlowTrend(ts);
-
-    return { flow, gauge, waterTemp, trend, timestamp: new Date().toISOString(), mock: false };
+    return { flow, gauge, waterTemp, trend: computeFlowTrend(ts), timestamp: new Date().toISOString(), mock: false };
   }
 
-  // ── Parse daily values ───────────────────────────────────
   function parseHistoricalData(data) {
-    const ts = data?.value?.timeSeries || [];
+    const ts = data.value.timeSeries || [];
     const flowSeries = [], gaugeSeries = [], tempSeries = [];
 
     for (const series of ts) {
-      const code = series.variable?.variableCode?.[0]?.value;
-      const values = (series.values?.[0]?.value || [])
-        .filter(v => v.value !== '-999999')
-        .map(v => ({ date: v.dateTime.slice(0, 10), value: parseFloat(v.value) }));
-
-      if (code === '00060') flowSeries.push(...values);
-      if (code === '00065') gaugeSeries.push(...values);
-      if (code === '00010') tempSeries.push(...values);
+      try {
+        const code   = series.variable?.variableCode?.[0]?.value;
+        const values = (series.values?.[0]?.value || [])
+          .filter(v => v.value !== '-999999' && v.value !== 'Ice')
+          .map(v => ({ date: (v.dateTime||'').slice(0, 10), value: parseFloat(v.value) }))
+          .filter(v => !isNaN(v.value));
+        if (code === '00060') flowSeries.push(...values);
+        if (code === '00065') gaugeSeries.push(...values);
+        if (code === '00010') tempSeries.push(...values);
+      } catch(e) { /* skip */ }
     }
 
     return { flowSeries, gaugeSeries, tempSeries, mock: false };
   }
 
-  // ── Compute trend from last 2 values ────────────────────
   function computeFlowTrend(ts) {
-    for (const series of ts) {
-      const code = series.variable?.variableCode?.[0]?.value;
-      if (code !== '00060') continue;
-      const values = (series.values?.[0]?.value || []).filter(v => v.value !== '-999999');
-      if (values.length < 2) return 'Stable';
-      const last = parseFloat(values[values.length - 1].value);
-      const prev = parseFloat(values[values.length - 2].value);
-      const change = ((last - prev) / prev) * 100;
-      if (change > 5) return '↑ Rising';
-      if (change < -5) return '↓ Falling';
-      return '→ Stable';
-    }
-    return 'Stable';
+    try {
+      for (const series of ts) {
+        const code = series.variable?.variableCode?.[0]?.value;
+        if (code !== '00060') continue;
+        const values = (series.values?.[0]?.value || []).filter(v => v.value !== '-999999');
+        if (values.length < 2) return '→ Stable';
+        const last = parseFloat(values[values.length - 1].value);
+        const prev = parseFloat(values[values.length - 2].value);
+        if (isNaN(last) || isNaN(prev) || prev === 0) return '→ Stable';
+        const pct = ((last - prev) / prev) * 100;
+        if (pct > 5)  return '↑ Rising';
+        if (pct < -5) return '↓ Falling';
+        return '→ Stable';
+      }
+    } catch(e) { /* */ }
+    return '→ Stable';
   }
 
-  // ── Estimate water temp from air temp if not available ────
-  // Formula: T_water ≈ 0.75 * T_air + seasonal_offset
-  // Trout streams have a natural lag from air temperature
   function estimateWaterTemp(airTempC, dateObj) {
-    const month = dateObj.getMonth() + 1; // 1-12
-    // Seasonal base temperatures for Provo River (mountain stream)
-    const seasonal = {
-      1: 2, 2: 2, 3: 4, 4: 6, 5: 8, 6: 11,
-      7: 14, 8: 13, 9: 11, 10: 8, 11: 4, 12: 2
-    };
-    const base = seasonal[month] || 8;
-    // Air temp influence (lagged/muted for stream)
-    const airInfluence = airTempC * 0.25;
-    return Utils.clamp(base + airInfluence, 0, 22);
+    try {
+      const month = (dateObj || new Date()).getMonth() + 1;
+      const seasonal = { 1:2,2:2,3:4,4:6,5:9,6:12,7:15,8:14,9:11,10:8,11:4,12:2 };
+      const base = seasonal[month] || 8;
+      return Utils.clamp(base + (airTempC || 0) * 0.2, 0, 22);
+    } catch(e) { return 10; }
   }
 
-  // ── Flow status ───────────────────────────────────────────
   function flowStatus(cfs) {
-    if (cfs === null) return { label: 'Unknown', class: 'text-3' };
+    if (cfs === null || cfs === undefined) return { label:'Unknown', class:'text-3' };
     const { lowFlowCfs, idealFlowMin, idealFlowMax, highFlowCfs } = CONFIG.trout;
-    if (cfs < lowFlowCfs)      return { label: 'Very Low', class: 'rating-poor' };
-    if (cfs < idealFlowMin)    return { label: 'Low',      class: 'rating-fair' };
-    if (cfs <= idealFlowMax)   return { label: 'Ideal',    class: 'rating-excellent' };
-    if (cfs < highFlowCfs)     return { label: 'High',     class: 'rating-fair' };
-    return { label: 'Very High', class: 'rating-poor' };
+    if (cfs < lowFlowCfs)    return { label:'Very Low',  class:'rating-poor'      };
+    if (cfs < idealFlowMin)  return { label:'Low',       class:'rating-fair'      };
+    if (cfs <= idealFlowMax) return { label:'Ideal ✓',   class:'rating-excellent' };
+    if (cfs < highFlowCfs)   return { label:'High',      class:'rating-fair'      };
+    return { label:'Very High', class:'rating-poor' };
   }
 
-  // ── Flow score (0-100) ────────────────────────────────────
   function flowScore(cfs) {
-    if (cfs === null) return 40;
+    if (cfs === null || cfs === undefined) return 45;
     const { lowFlowCfs, idealFlowMin, idealFlowMax, highFlowCfs } = CONFIG.trout;
-    if (cfs < lowFlowCfs)    return Utils.clamp(20 + (cfs / lowFlowCfs) * 20, 0, 40);
-    if (cfs < idealFlowMin)  return Utils.clamp(40 + ((cfs - lowFlowCfs) / (idealFlowMin - lowFlowCfs)) * 30, 40, 70);
+    if (cfs < lowFlowCfs)    return Utils.clamp(Math.round(20 + (cfs/lowFlowCfs)*20), 0, 40);
+    if (cfs < idealFlowMin)  return Utils.clamp(Math.round(40 + ((cfs-lowFlowCfs)/(idealFlowMin-lowFlowCfs))*30), 40, 70);
     if (cfs <= idealFlowMax) return 100;
-    if (cfs < highFlowCfs)   return Utils.clamp(100 - ((cfs - idealFlowMax) / (highFlowCfs - idealFlowMax)) * 60, 40, 100);
-    return Utils.clamp(40 - ((cfs - highFlowCfs) / 500) * 30, 0, 40);
+    if (cfs < highFlowCfs)   return Utils.clamp(Math.round(100 - ((cfs-idealFlowMax)/(highFlowCfs-idealFlowMax))*60), 40, 100);
+    return Utils.clamp(Math.round(40 - ((cfs-highFlowCfs)/500)*30), 0, 40);
   }
 
-  // ── Water temp score (0-100) ─────────────────────────────
   function waterTempScore(tempC) {
-    if (tempC === null) return 50;
+    if (tempC === null || tempC === undefined) return 55;
     const { idealWaterTempMin, idealWaterTempMax } = CONFIG.trout;
-    if (tempC < 4)  return 10;  // too cold
-    if (tempC < idealWaterTempMin) {
-      return Utils.clamp(10 + ((tempC - 4) / (idealWaterTempMin - 4)) * 70, 10, 80);
-    }
+    if (tempC < 2)  return 5;
+    if (tempC < 4)  return 15;
+    if (tempC < idealWaterTempMin) return Utils.clamp(Math.round(15 + ((tempC-4)/(idealWaterTempMin-4))*70), 15, 85);
     if (tempC <= idealWaterTempMax) return 100;
-    if (tempC < 18) return Utils.clamp(100 - ((tempC - idealWaterTempMax) / 3) * 40, 20, 100);
-    if (tempC < 22) return Utils.clamp(60 - ((tempC - 18) / 4) * 50, 5, 60);
-    return 5; // lethal for trout
+    if (tempC < 18) return Utils.clamp(Math.round(100 - ((tempC-idealWaterTempMax)/3)*40), 20, 100);
+    if (tempC < 22) return Utils.clamp(Math.round(60  - ((tempC-18)/4)*50), 5, 60);
+    return 5;
   }
 
-  // ── Mock data ─────────────────────────────────────────────
   function getMockCurrentData() {
-    return {
-      flow: 285,
-      gauge: 2.45,
-      waterTemp: null, // will be estimated
-      trend: '→ Stable',
-      timestamp: new Date().toISOString(),
-      mock: true,
-    };
+    return { flow:285, gauge:2.45, waterTemp:null, trend:'→ Stable', timestamp:new Date().toISOString(), mock:true };
   }
 
   function getMockHistoricalData(days = 7) {
-    const flowSeries = [], gaugeSeries = [], tempSeries = [];
+    const flowSeries=[], gaugeSeries=[], tempSeries=[];
     for (let i = days; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
+      const d = new Date(); d.setDate(d.getDate() - i);
       const date = Utils.toISODate(d);
-      const base = 260 + Math.random() * 80;
-      flowSeries.push({ date, value: Math.round(base) });
-      gaugeSeries.push({ date, value: +(2.1 + Math.random() * 0.7).toFixed(2) });
-      tempSeries.push({ date, value: +(11 + Math.random() * 3).toFixed(1) });
+      flowSeries.push({ date, value: Math.round(250 + Math.random()*100) });
+      gaugeSeries.push({ date, value: parseFloat((2.0 + Math.random()*0.8).toFixed(2)) });
+      tempSeries.push({ date, value: parseFloat((10 + Math.random()*4).toFixed(1)) });
     }
-    return { flowSeries, gaugeSeries, tempSeries, mock: true };
+    return { flowSeries, gaugeSeries, tempSeries, mock:true };
   }
 
-  return {
-    fetchCurrentConditions,
-    fetchHistoricalData,
-    estimateWaterTemp,
-    flowStatus,
-    flowScore,
-    waterTempScore,
-  };
+  return { fetchCurrentConditions, fetchHistoricalData, estimateWaterTemp, flowStatus, flowScore, waterTempScore };
 })();

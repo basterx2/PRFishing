@@ -1,216 +1,207 @@
 // ============================================================
-// WEATHER — National Weather Service API (free, no key)
+// WEATHER — National Weather Service API v2
+// Robust fallback — never crashes the app
 // ============================================================
 
 const Weather = (() => {
 
-  const { office, gridX, gridY, lat, lon, baseUrl } = CONFIG.nws;
+  const { office, gridX, gridY, baseUrl } = CONFIG.nws;
 
-  // ── Fetch 7-day forecast ──────────────────────────────────
   async function fetchForecast() {
-    const cacheKey = `nws_forecast_${office}_${gridX}_${gridY}`;
+    const cacheKey = `nws_forecast_v2_${office}_${gridX}_${gridY}`;
     const cached = Utils.cacheGet(cacheKey);
     if (cached) return cached;
 
     try {
       const url = `${baseUrl}/gridpoints/${office}/${gridX},${gridY}/forecast`;
-      const data = await Utils.fetchWithTimeout(url);
+      const data = await Utils.fetchWithTimeout(url, 10000);
+      if (!data?.properties?.periods?.length) throw new Error('Empty NWS response');
       const result = parseForecast(data);
       Utils.cacheSet(cacheKey, result, CONFIG.cache.weather);
       return result;
     } catch(e) {
-      console.warn('NWS forecast failed:', e.message);
+      console.warn('NWS forecast failed, using mock:', e.message);
       return getMockForecast();
     }
   }
 
-  // ── Fetch hourly forecast (for today's time-of-day calc) ──
   async function fetchHourly() {
-    const cacheKey = `nws_hourly_${office}_${gridX}_${gridY}`;
+    const cacheKey = `nws_hourly_v2_${office}_${gridX}_${gridY}`;
     const cached = Utils.cacheGet(cacheKey);
     if (cached) return cached;
 
     try {
       const url = `${baseUrl}/gridpoints/${office}/${gridX},${gridY}/forecast/hourly`;
-      const data = await Utils.fetchWithTimeout(url);
+      const data = await Utils.fetchWithTimeout(url, 10000);
+      if (!data?.properties?.periods?.length) throw new Error('Empty NWS hourly');
       const result = parseHourly(data);
       Utils.cacheSet(cacheKey, result, CONFIG.cache.weather);
       return result;
     } catch(e) {
-      console.warn('NWS hourly failed:', e.message);
+      console.warn('NWS hourly failed, using mock:', e.message);
       return getMockHourly();
     }
   }
 
-  // ── Parse forecast periods ───────────────────────────────
+  // NWS temperature can be in F or C depending on unitCode
+  function toC(value, unitCode) {
+    if (!unitCode) return (value - 32) * 5/9; // assume F
+    if (unitCode.includes('degC') || unitCode.includes('wmoUnit:degC')) return value;
+    return (value - 32) * 5/9; // F → C
+  }
+
   function parseForecast(data) {
-    const periods = data?.properties?.periods || [];
+    const periods = data.properties.periods;
     const days = [];
 
-    // NWS gives day/night pairs; group by date
-    for (let i = 0; i < periods.length; i += 2) {
-      const day  = periods[i];
-      const night = periods[i+1] || periods[i];
-      if (!day) break;
+    for (let i = 0; i < periods.length && days.length < 7; i++) {
+      const p = periods[i];
+      if (!p.isDaytime) continue; // skip night periods for day cards
 
-      const date = new Date(day.startTime);
-      const tempC = fToC(day.temperature); // NWS gives Fahrenheit
-      const nightTempC = night ? fToC(night.temperature) : tempC - 8;
+      const night = periods[i + 1] || p;
+      const date = new Date(p.startTime);
+      const tempC = toC(p.temperature, p.temperatureUnit === 'F' ? 'degF' : 'degC');
+      const nightTempC = toC(night.temperature, night.temperatureUnit === 'F' ? 'degF' : 'degC');
 
       days.push({
         date,
         dateStr: Utils.toISODate(date),
-        dayLabel: day.name,
-        shortForecast: day.shortForecast,
-        detailedForecast: day.detailedForecast,
-        icon: day.icon,
-        tempC,
-        nightTempC,
-        windSpeed: parseWindSpeed(day.windSpeed),
-        windDir: day.windDirection,
-        probabilityOfPrecipitation: day.probabilityOfPrecipitation?.value || 0,
-        cloudCover: estimateCloudCover(day.shortForecast),
-        weatherIcon: Utils.weatherIcon(day.shortForecast),
-        isDaytime: day.isDaytime,
-        humidity: day.relativeHumidity?.value || 60,
+        dayLabel: p.name || '',
+        shortForecast: p.shortForecast || 'Partly Cloudy',
+        detailedForecast: p.detailedForecast || '',
+        tempC: isNaN(tempC) ? 15 : tempC,
+        nightTempC: isNaN(nightTempC) ? 8 : nightTempC,
+        windSpeed: parseWindSpeed(p.windSpeed),
+        windDir: p.windDirection || 'SW',
+        probabilityOfPrecipitation: p.probabilityOfPrecipitation?.value || 0,
+        cloudCover: estimateCloudCover(p.shortForecast),
+        weatherIcon: Utils.weatherIcon(p.shortForecast),
+        isDaytime: true,
+        humidity: p.relativeHumidity?.value || 50,
       });
     }
 
-    const current = days[0] || null;
+    // If we somehow got no daytime periods, try again without the filter
+    if (days.length === 0) {
+      for (let i = 0; i < Math.min(periods.length, 14); i += 2) {
+        const p = periods[i];
+        const date = new Date(p.startTime);
+        const tempC = toC(p.temperature, p.temperatureUnit === 'F' ? 'degF' : 'degC');
+        days.push({
+          date, dateStr: Utils.toISODate(date),
+          dayLabel: p.name || '',
+          shortForecast: p.shortForecast || 'Partly Cloudy',
+          detailedForecast: p.detailedForecast || '',
+          tempC: isNaN(tempC) ? 15 : tempC,
+          nightTempC: isNaN(tempC) ? 8 : tempC - 7,
+          windSpeed: parseWindSpeed(p.windSpeed),
+          windDir: p.windDirection || 'SW',
+          probabilityOfPrecipitation: p.probabilityOfPrecipitation?.value || 0,
+          cloudCover: estimateCloudCover(p.shortForecast),
+          weatherIcon: Utils.weatherIcon(p.shortForecast),
+          isDaytime: true,
+          humidity: 50,
+        });
+        if (days.length >= 7) break;
+      }
+    }
 
-    // Estimate pressure (NWS basic grid doesn't always include it)
-    // We'll use 1015 as baseline and adjust for altitude (Provo ~4500ft / 1370m)
-    // Provo standard pressure ~860 hPa
-    const basePressure = 860;
-
-    return {
-      days: days.slice(0, 7),
-      current,
-      basePressure,
-      pressureStable: true, // NWS doesn't give pressure in basic forecast
-    };
+    return { days: days.slice(0,7), current: days[0] || null, basePressure: 860, pressureStable: true };
   }
 
-  // ── Parse hourly data ─────────────────────────────────────
   function parseHourly(data) {
-    const periods = data?.properties?.periods || [];
-    return periods.slice(0, 24).map(p => ({
+    return (data.properties.periods || []).slice(0, 24).map(p => ({
       time: new Date(p.startTime),
-      tempC: fToC(p.temperature),
+      tempC: toC(p.temperature, p.temperatureUnit === 'F' ? 'degF' : 'degC'),
       windSpeed: parseWindSpeed(p.windSpeed),
       cloudCover: estimateCloudCover(p.shortForecast),
       rain: p.probabilityOfPrecipitation?.value || 0,
-      shortForecast: p.shortForecast,
+      shortForecast: p.shortForecast || '',
     }));
   }
 
-  // ── Estimate cloud cover % from text description ──────────
-  function estimateCloudCover(desc = '') {
+  function estimateCloudCover(desc) {
+    if (!desc) return 50;
     const d = desc.toLowerCase();
-    if (d.includes('clear') || d.includes('sunny')) return 0;
+    if (d.includes('clear') || d.includes('sunny')) return 5;
     if (d.includes('mostly sunny') || d.includes('mostly clear')) return 15;
-    if (d.includes('partly sunny') || d.includes('partly cloudy')) return 40;
+    if (d.includes('partly')) return 40;
     if (d.includes('mostly cloudy')) return 70;
     if (d.includes('cloudy') || d.includes('overcast')) return 90;
     if (d.includes('fog') || d.includes('rain') || d.includes('snow') || d.includes('thunder')) return 95;
     return 50;
   }
 
-  // ── Parse wind speed string "12 mph" → number ────────────
-  function parseWindSpeed(str = '') {
-    const match = str.match(/(\d+)/);
-    return match ? parseInt(match[1]) : 0;
+  function parseWindSpeed(str) {
+    if (!str) return 0;
+    const m = String(str).match(/(\d+)/);
+    return m ? parseInt(m[1]) : 0;
   }
 
-  // ── °F → °C ───────────────────────────────────────────────
-  function fToC(f) { return ((f - 32) * 5 / 9); }
-
-  // ── Cloud cover score (0-100) ─────────────────────────────
-  // Overcast = better for trout (reduces light penetration)
-  // But extreme overcast can kill bite
   function cloudCoverScore(pct) {
-    if (pct <= 20)  return 50;  // bright sun = fish go deep
-    if (pct <= 40)  return 70;  // light clouds = good
-    if (pct <= 70)  return 90;  // overcast = excellent
-    if (pct <= 90)  return 80;  // mostly cloudy = good
-    return 60;                  // total overcast = fair
+    const p = pct || 0;
+    if (p <= 20)  return 50;
+    if (p <= 40)  return 70;
+    if (p <= 70)  return 90;
+    if (p <= 90)  return 80;
+    return 60;
   }
 
-  // ── Pressure score (0-100) ────────────────────────────────
-  // Stable pressure = best; rising = ok; falling = poor
-  function pressureScore(hPa, trend = 'stable') {
-    // All relative since we're estimating; use trend
-    if (trend === 'stable')  return 90;
-    if (trend === 'rising')  return 70;
+  function pressureScore(hPa, trend) {
     if (trend === 'falling') return 40;
-    return 65;
+    if (trend === 'rising')  return 70;
+    return 90; // stable
   }
 
-  // ── Stability score (0-100) ───────────────────────────────
   function stabilityScore(forecast) {
-    if (!forecast || !forecast.days || forecast.days.length < 2) return 65;
-    const today = forecast.days[0];
-    const tomorrow = forecast.days[1];
-    const tempDiff = Math.abs(today.tempC - tomorrow.tempC);
-    const rainRisk = Math.max(today.probabilityOfPrecipitation, tomorrow.probabilityOfPrecipitation);
-
-    let score = 100;
-    score -= tempDiff * 3;        // big temp swings = unstable
-    score -= rainRisk * 0.5;      // rain probability
-    return Utils.clamp(Math.round(score), 0, 100);
+    try {
+      if (!forecast?.days?.length) return 65;
+      const t = forecast.days[0];
+      const n = forecast.days[1] || t;
+      const diff = Math.abs(t.tempC - n.tempC);
+      const rain = Math.max(t.probabilityOfPrecipitation || 0, n.probabilityOfPrecipitation || 0);
+      return Utils.clamp(Math.round(100 - diff*3 - rain*0.5), 0, 100);
+    } catch(e) { return 65; }
   }
 
-  // ── Mock data ─────────────────────────────────────────────
+  // ── Rich mock data for offline/fallback ───────────────────
   function getMockForecast() {
-    const days = [];
-    const descs = ['Sunny','Partly Cloudy','Mostly Cloudy','Chance of Rain','Clear','Sunny','Partly Sunny'];
-    const temps = [18, 16, 14, 13, 15, 17, 16];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() + i);
-      days.push({
-        date,
-        dateStr: Utils.toISODate(date),
-        dayLabel: i === 0 ? 'Today' : date.toLocaleDateString('en-US',{weekday:'long'}),
+    const descs = ['Sunny','Partly Cloudy','Mostly Cloudy','Chance of Showers','Sunny','Partly Sunny','Clear'];
+    const temps  = [17, 15, 13, 12, 16, 18, 15];
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(); date.setDate(date.getDate() + i); date.setHours(0,0,0,0);
+      return {
+        date, dateStr: Utils.toISODate(date),
+        dayLabel: Utils.formatDay(date),
         shortForecast: descs[i],
-        detailedForecast: descs[i] + ' with light winds.',
+        detailedForecast: descs[i] + ' with light winds out of the southwest.',
         tempC: temps[i],
         nightTempC: temps[i] - 7,
         windSpeed: 5 + Math.round(Math.random()*8),
         windDir: 'SW',
-        probabilityOfPrecipitation: i === 3 ? 40 : 5,
+        probabilityOfPrecipitation: i === 3 ? 45 : i === 2 ? 20 : 5,
         cloudCover: estimateCloudCover(descs[i]),
         weatherIcon: Utils.weatherIcon(descs[i]),
         isDaytime: true,
-        humidity: 45,
-      });
-    }
+        humidity: 42,
+      };
+    });
     return { days, current: days[0], basePressure: 860, pressureStable: true };
   }
 
   function getMockHourly() {
-    const hours = [];
-    for (let h = 0; h < 24; h++) {
-      const d = new Date();
-      d.setHours(h, 0, 0, 0);
-      hours.push({
+    return Array.from({ length: 24 }, (_, h) => {
+      const d = new Date(); d.setHours(h, 0, 0, 0);
+      return {
         time: d,
         tempC: 14 + 4 * Math.sin((h - 6) * Math.PI / 12),
-        windSpeed: 5 + Math.round(Math.random() * 5),
+        windSpeed: 5 + Math.round(Math.random()*5),
         cloudCover: h > 14 ? 50 : 20,
         rain: h > 15 ? 20 : 0,
         shortForecast: h < 10 ? 'Sunny' : h < 16 ? 'Partly Cloudy' : 'Mostly Cloudy',
-      });
-    }
-    return hours;
+      };
+    });
   }
 
-  return {
-    fetchForecast,
-    fetchHourly,
-    cloudCoverScore,
-    pressureScore,
-    stabilityScore,
-    estimateCloudCover,
-  };
+  return { fetchForecast, fetchHourly, cloudCoverScore, pressureScore, stabilityScore, estimateCloudCover };
 })();
