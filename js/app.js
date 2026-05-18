@@ -302,3 +302,78 @@ const App = (() => {
 })();
 
 document.addEventListener('DOMContentLoaded', () => App.init());
+
+// ── HATCH CALENDAR integration (appended) ───────────────
+// Override onTabChange to handle hatch tab
+const _origOnTabChange = typeof App !== 'undefined' ? null : null;
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Patch: intercept hatch tab activation
+  document.querySelectorAll('.tab').forEach(tab => {
+    if (tab.dataset.tab === 'hatch') {
+      tab.addEventListener('click', () => {
+        // Init hatch calendar with current water temp
+        const waterTempEl = document.getElementById('rTemp');
+        let waterTemp = null;
+        if (waterTempEl) {
+          const match = waterTempEl.textContent.match(/([\d.]+)/);
+          if (match) waterTemp = parseFloat(match[1]);
+        }
+        HatchCalendar.init(waterTemp);
+      });
+    }
+  });
+
+  // Widget link → switch to hatch tab
+  document.getElementById('hatchWidgetLink')?.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    const hatchTab = document.querySelector('[data-tab="hatch"]');
+    const hatchContent = document.getElementById('tab-hatch');
+    if (hatchTab) hatchTab.classList.add('active');
+    if (hatchContent) hatchContent.classList.add('active');
+    HatchCalendar.init(null);
+  });
+});
+
+// Render today's hatch widget on dashboard
+function renderHatchWidget(waterTempC) {
+  const list = document.getElementById('hatchTodayList');
+  if (!list) return;
+
+  const month = new Date().getMonth() + 1;
+  const active = HatchCalendar.getTodayHatches(waterTempC, month).slice(0, 3);
+
+  if (!active.length) {
+    list.innerHTML = '<div style="color:var(--text-3);font-size:0.78rem">No major hatches today — try midges.</div>';
+    return;
+  }
+
+  list.innerHTML = active.map(h => {
+    const intensity = h.intensity[month] || 0;
+    const iColor = HatchCalendar.intensityColor(intensity);
+    const iLabel = HatchCalendar.intensityLabel(intensity);
+    return `
+      <div class="hatch-today-item">
+        <span class="hatch-today-emoji">${h.emoji}</span>
+        <div class="hatch-today-info">
+          <div class="hatch-today-name">${h.name}</div>
+          <div class="hatch-today-detail">${h.timeLabel} · ${h.sizeLabel}</div>
+        </div>
+        <span class="hatch-today-intensity" style="color:${iColor};background:${iColor}18">${iLabel}</span>
+      </div>`;
+  }).join('');
+}
+
+// Auto-render widget after app loads
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    const waterTempEl = document.getElementById('rTemp');
+    let wt = null;
+    if (waterTempEl) {
+      const m = waterTempEl.textContent.match(/([\d.]+)/);
+      if (m) wt = parseFloat(m[1]);
+    }
+    renderHatchWidget(wt);
+  }, 2500);
+});

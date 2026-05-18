@@ -59,6 +59,14 @@
       <span class="tab-icon">🗺️</span>
       <span>Map</span>
     </button>
+    <button class="tab" data-tab="hatch">
+      <span class="tab-icon">🦋</span>
+      <span>Hatches</span>
+    </button>
+    <button class="tab" data-tab="access">
+      <span class="tab-icon">📍</span>
+      <span>Access</span>
+    </button>
     <button class="tab" data-tab="forecast">
       <span class="tab-icon">📅</span>
       <span>Forecast</span>
@@ -149,6 +157,15 @@
       <div id="recList" class="rec-list">—</div>
     </section>
 
+      <!-- TODAY'S HATCHES WIDGET -->
+      <section class="hatch-widget">
+        <div class="hatch-widget-title">🦋 Today's Hatches</div>
+        <div class="hatch-today-list" id="hatchTodayList">
+          <div style="color:var(--text-3);font-size:0.78rem">Loading...</div>
+        </div>
+        <span class="hatch-widget-link" id="hatchWidgetLink">View full hatch calendar →</span>
+      </section>
+
   </div><!-- /dashboard -->
 
   <!-- ===================== MAP TAB ===================== -->
@@ -166,6 +183,41 @@
       <div class="legend-item"><span class="dot orange"></span>Fair</div>
       <div class="legend-item"><span class="dot red"></span>Poor</div>
     </div>
+  </div>
+
+  <!-- ===================== HATCH TAB ===================== -->
+  <div class="tab-content" id="tab-hatch">
+    <div id="hatchContent" style="padding:0.25rem 0">
+      <div style="padding:2rem;text-align:center;color:var(--text-3)">Loading hatch data...</div>
+    </div>
+  </div>
+
+  <!-- ===================== ACCESS TAB ===================== -->
+  <div class="tab-content" id="tab-access">
+
+    <!-- Filter bar -->
+    <div class="access-filter-bar">
+      <button class="access-zone-btn active" data-zone="all">All Zones</button>
+      <button class="access-zone-btn" data-zone="upper">Upper</button>
+      <button class="access-zone-btn" data-zone="middle">Middle</button>
+      <button class="access-zone-btn" data-zone="lower">Lower</button>
+      <button class="access-map-btn" id="accessMapBtn" title="Show on map">
+        🗺 Show on Map
+      </button>
+    </div>
+
+    <!-- Legend -->
+    <div class="access-legend">
+      <div class="al-item"><span style="color:#4db8a0">■</span> Fly &amp; Lure Only</div>
+      <div class="al-item"><span style="color:#e8b84b">■</span> Standard</div>
+      <div class="al-item">🟢 Paved</div>
+      <div class="al-item">🟡 Gravel</div>
+      <div class="al-item">⭐ Popular</div>
+    </div>
+
+    <!-- Access point list -->
+    <div id="accessContent"></div>
+
   </div>
 
   <!-- ===================== FORECAST TAB ===================== -->
@@ -213,6 +265,8 @@
 <script src="js/map.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/ui.js"></script>
+<script src="js/hatch.js"></script>
+<script src="js/access.js"></script>
 <script src="js/app.js"></script>
 
 <script>
